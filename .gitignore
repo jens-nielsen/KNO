@@ -1,2 +1,3 @@
 datasets/ns_pipe.npz
 datasets/ns_3d_.npz
+__pycache__
