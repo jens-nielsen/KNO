@@ -61,10 +61,10 @@ integration_kernel = kernels[args.int_kernel]
 integration_kernel = partial(integration_kernel, ndims=1)
 
 ### preprocess data
-x_normalizer = UnitGaussianNormalizer(x_train)  
+x_normalizer = UnitGaussianNormalizer(x_train, axis=None)
 x_train = x_normalizer.encode(x_train)
 x_test = x_normalizer.encode(x_test)
-y_normalizer = UnitGaussianNormalizer(y_train.reshape(ntrain,-1))
+y_normalizer = UnitGaussianNormalizer(y_train.reshape(ntrain,-1), axis=None)
 
 in_feats = codomain_dims + domain_dims
 model = model(integration_kernel, 

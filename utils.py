@@ -38,10 +38,10 @@ def shuffle(x,y, seed=1):
     return x,y
 
 class UnitGaussianNormalizer(object):
-    def __init__(self, x, eps=0.00001):
-        # x could be in shape of ntrain*n or ntrain*T*n or ntrain*n*T
-        self.mean = jnp.mean(x, axis=0)
-        self.std = jnp.std(x, axis=0)
+
+    def __init__(self, x, axis=0, eps=1e-7):
+        self.mean = jnp.mean(x, axis=axis, keepdims=True)
+        self.std = jnp.std(x, axis=axis, keepdims=True)
         self.eps = eps
 
     @partial(jax.jit, static_argnums=(0,))
@@ -53,7 +53,6 @@ class UnitGaussianNormalizer(object):
     def decode(self, x):
         std = self.std + self.eps  # n
         mean = self.mean
-        # x is in shape of batch*n or T*batch*n
         x = (x * std) + mean
         return x
 

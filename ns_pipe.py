@@ -66,8 +66,8 @@ codomain_dims = 0
 ntrain = 1000
 ntest = 200
 
-q_train, q_test = q_nodes[: ntrain], q_nodes[ntrain: ntrain+ntest]
-y_train, y_test = y[: ntrain], y[ntrain: ntrain+ntest]
+q_train, q_test = q_nodes[: ntrain], q_nodes[-ntest:]
+y_train, y_test = y[: ntrain], y[-ntest:]
 
 ### data config 
 num_train_batches = len(q_train) // args.batch_size
