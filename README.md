@@ -13,14 +13,14 @@ This paper introduces the Kernel Neural Operator (KNO), a provably convergent op
 }
 ```
 ### Code instructions
-Each of the problems have their own respective python script, which can be called directly. The defaults hyperparameters are set, but can be changed via the argparse syntax:
+Each of the problems have their own respective python script, which can be called directly. The default hyperparameters are set, but can be changed via the argparse syntax:
 
 
 ```
 python3 burgers.py --int-kernel=ns_gsm --lift-dim=128
 ```
 
-Otherwise install python 3.10 and then run
+Otherwise install python >=3.10 and then run
 
 ```
 pip install -U jax[cuda12]
@@ -29,3 +29,5 @@ pip install -U optax
 ```
 
 (changing cuda12 to cpu if necessary)
+
+Both of the Navier-Stokes datasets can be found here: https://drive.google.com/drive/folders/15akEa7LDCHMFGQw3FaHetfqGMPhM5OAb?usp=drive_link
