@@ -35,19 +35,14 @@ ntest = 10
 res_1d = 64
 n_1d = 128
 ndims = 3
-data = np.load('./datasets/ns_pdebench_pres_t0_t1_mach_1.0.npz')
-x = data['x'].astype(DTYPE)[...,None]
+data = np.load('./datasets/ns_3d_.npz')
+x = data['x'].astype(DTYPE)
 y = data['y'].astype(DTYPE)
-x = x[:,::2,::2,::2] 
-y = y[:,::2,::2,::2].reshape(ntrain + ntest, -1)
 domain_dims = 3
 codomain_dims = 1
 
 x_grid = data['x_grid'].astype(DTYPE)
-x_grid = jnp.asarray(jnp.meshgrid(x_grid, x_grid, x_grid)).transpose(1,2,3,0)
-x_grid = x_grid[::2,::2,::2]
 
-x,y = shuffle(x,y)
 x_train, x_test = x[:ntrain], x[-ntest:]
 y_train, y_test = y[:ntrain], y[-ntest:]
 
@@ -127,7 +122,6 @@ for epoch in range(args.epochs):
     for batch_index in range(num_train_batches): 
         batch = get_batch(key, (x_train, y_train), batch_index, args.batch_size)
         model, opt_state, train_loss, rel_l2 = train_step(model, opt_state, optimizer, batch)
-        print(rel_l2)
     if (epoch % args.print_every) == 0 or (epoch == args.epochs - 1):
         print(f'{epoch=}, train rel_l2: {rel_l2.item()*100:.3f}')
         

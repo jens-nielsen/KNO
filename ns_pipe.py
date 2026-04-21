@@ -13,12 +13,13 @@ parser.add_argument('--epochs', type=int, default=500)
 parser.add_argument('--batch-size', type=int, default=1)
 parser.add_argument('--lr-max', type=float, default=0.001)
 parser.add_argument('--lift-dim', type=int, default=128)
-parser.add_argument('--depth', type=int, default=4)
+parser.add_argument('--depth', type=int, default=7)
 parser.add_argument('--test-batch-size', type=int, default=1)
 parser.add_argument('--int-kernel', type=str, default='ns_gsm', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm'])
 parser.add_argument('--seed', type=int, default=42)
 parser.add_argument('--print-every', type=int, default=1)
 parser.add_argument('--eval-every', type=int, default=5)
+parser.add_argument('--grad-clip', type=float, default=0.5)
 
 args = parser.parse_args()
 print(args)
@@ -89,7 +90,8 @@ model = model(integration_kernel,
               key=key) 
 
 lr_schedule = cosine_annealing(args.epochs*num_train_batches, peak_value=args.lr_max)
-optimizer = optax.adam(lr_schedule)
+
+optimizer = optax.chain(optax.clip_by_global_norm(max_norm=args.grad_clip), optax.adam(lr_schedule))
 opt_state = optimizer.init(eqx.filter([model], is_trainable))
 
 param_count = sum(x.size for x in jax.tree.leaves(eqx.filter(model, is_trainable)))
