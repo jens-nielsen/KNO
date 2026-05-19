@@ -1,3 +1,7 @@
 datasets/ns_pipe.npz
 datasets/ns_3d_.npz
 __pycache__
+.DS_Store
+wandb/
+saved_models/
+datasets/

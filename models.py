@@ -45,14 +45,16 @@ class KNO_REG_GRID_1D(eqx.Module):
             f_q = jnp.einsum('q,kq->k',f_q, G)
             return f_q
         
-        q_nodes = x_grid
+        q_nodes = x_grid # (N, 1)
         f_q = f_x ### already at quad nodes
         f_q = jnp.concatenate((f_q,q_nodes), axis=-1) 
         f_q = eqx.filter_vmap(self.lift_kernel)(f_q)
         f_q = self.activation(f_q)
+        
+        # f_q shape is (N, lift_dim) where N is number of quad nodes, we want to keep this ordering for conv layers but need to move lift_dim to end for integration transform
 
         for i in range(self.depth-1):
-
+            # q_weights is (N, 1)
             f_q_skip = self.pointwise_layers[i](f_q.T).T
             f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,q_nodes,q_weights,f), 
                                      in_axes=(eqx.if_array(0),1), out_axes=1)(self.integration_kernels[i], 
@@ -205,7 +207,7 @@ class KNO_DARCY_PWC(eqx.Module):
                 f_q):
             G1 = int_kernel[0](q,q) * w.T
             G2 = int_kernel[1](q,q) * w.T
-            f_q = jnp.einsum('ij,ki->kj',f_q, G1) +  jnp.einsum('ij,kj->ik',f_q, G2)
+            f_q = (G1 @ f_q) + (f_q @ G2.T)
             return f_q
         
         q_nodes = x_grid[:,0,0] ## grab 1d x grid
@@ -213,31 +215,31 @@ class KNO_DARCY_PWC(eqx.Module):
         f_x = jnp.concatenate((f_x,x_grid), axis=-1) 
         f_x = f_x.reshape(-1,self.in_feats)
         f_x = eqx.filter_vmap(self.lift_kernel)(f_x)
-        f_x = f_x.reshape(len(q_nodes), len(q_nodes), self.lift_dim)
+        f_x = f_x.reshape(len(q_nodes), len(q_nodes), self.lift_dim).transpose(2,0,1)
         f_q = f_x
 
         for i in range(self.depth-1):
 
-            f_q_skip = self.pointwise_layers[i](f_q.reshape(-1,self.lift_dim).T).T
+            f_q_skip = self.pointwise_layers[i](f_q.reshape(self.lift_dim, -1))
             f_q_skip = f_q_skip.reshape(f_q.shape)
 
             f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,q_nodes,q_weights,f), 
-                                 in_axes=(eqx.if_array(0),self.d), 
-                                 out_axes=self.d)(self.integration_kernels[i],
-                                                  f_q)
+                                 in_axes=(eqx.if_array(0),0), 
+                                 out_axes=0)(self.integration_kernels[i],
+                                             f_q)
             f_q = f_q_skip + f_q
             f_q = jax.nn.gelu(f_q)
 
-        f_q_skip = self.pointwise_layers[-1](f_q.reshape(-1,self.lift_dim).T).T
+        f_q_skip = self.pointwise_layers[-1](f_q.reshape(self.lift_dim, -1))
         f_q_skip = f_q_skip.reshape(f_q.shape)
 
         f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,q_nodes,q_weights,f), 
-                             in_axes=(eqx.if_array(0),self.d), 
-                             out_axes=self.d)(self.integration_kernels[-1],
-                                              f_q)
+                             in_axes=(eqx.if_array(0),0), 
+                             out_axes=0)(self.integration_kernels[-1],
+                                         f_q)
         f_q = f_q + f_q_skip
 
-        f_q = f_q.reshape(-1,self.lift_dim)
+        f_q = f_q.transpose(1,2,0).reshape(-1,self.lift_dim)
         f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[0])(f_q))
         f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[1])(f_q))
         f_q = eqx.filter_vmap(self.proj_layers[2])(f_q)
