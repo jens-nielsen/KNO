@@ -7,6 +7,8 @@ import equinox as eqx
 from models import KNO_DARCY_PWC as model
 import argparse
 
+import wandb
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', type=int, default=10_000)
 parser.add_argument('--batch-size', type=int, default=100)
@@ -103,10 +105,19 @@ def eval(model, batch,):
         y_pred = jax.lax.map(lambda x: model(x, x_grid, q_weights),x, batch_size=args.test_batch_size) 
         y_pred = y_pred.reshape(ntest,-1)
         y_pred = y_normalizer.decode(y_pred)
-        return (jnp.linalg.norm(y-y_pred, axis=1) / jnp.linalg.norm(y, axis=1)).mean()
+        test_l2 = ((y - y_pred)**2).sum(axis=-1).mean()
+        rel_l2 =  (jnp.linalg.norm(y-y_pred, axis=1) / jnp.linalg.norm(y, axis=1)).mean()
+        return test_l2, rel_l2
     
-    rel_l2 = loss(model)
-    return rel_l2
+    test_l2, test_rel_l2 = loss(model)
+    return test_l2, test_rel_l2
+
+
+wandb.init(
+    project="KNO_PWC",
+    config=vars(args),
+    name="DarcyPWC_KNO",
+)
 
 
 for epoch in range(args.epochs):
@@ -120,5 +131,11 @@ for epoch in range(args.epochs):
         print(f'{epoch=}, train rel_l2: {rel_l2.item()*100:.3f}')
         
     if (epoch % args.eval_every) == 0 or (epoch == args.epochs - 1):
-        test_rel_l2 = eval(model, (x_test, y_test))
+        test_l2, test_rel_l2 = eval(model, (x_test, y_test))
         print(f'test rel_l2: {test_rel_l2.item()*100:.3f}')
+
+    wandb.log({"Train L2": train_loss, "Test L2": test_l2, "Train Rel L2": rel_l2, "Test Rel L2": test_rel_l2})
+
+wandb.finish()
+
+eqx.tree_serialise_leaves("./saved_models/DarcyPWC_KNO.eqx", model)
