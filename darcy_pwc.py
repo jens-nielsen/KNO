@@ -116,7 +116,7 @@ def eval(model, batch,):
 wandb.init(
     project="KNO_PWC",
     config=vars(args),
-    name="DarcyPWC_KNO",
+    name="DarcyPWC_KNO_" + args.int_kernel,
 )
 
 
@@ -138,4 +138,4 @@ for epoch in range(args.epochs):
 
 wandb.finish()
 
-eqx.tree_serialise_leaves("./saved_models/DarcyPWC_KNO.eqx", model)
+eqx.tree_serialise_leaves(f"./saved_models/DarcyPWC_{args.int_kernel}.eqx", model)
