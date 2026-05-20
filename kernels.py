@@ -60,7 +60,14 @@ class GreensSecondOrderKernel(eqx.Module, KernelBaseClass):
                                   )
         
     def singularity_func(self, x, y):
-        return jnp.log(jnp.linalg.norm(x-y) + 1e-7) if self.ndims == 2 else 1/(jnp.linalg.norm(x-y) + 1e-7)
+        if self.ndims == 2:
+            r = jnp.linalg.norm(x-y) + 1e-7
+            return jnp.log(r)
+        elif self.ndims == 1:
+            r = jnp.linalg.norm(x-y) + 1e-7
+            return r
+        else:
+            raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel")
         
     def eval(self, x, y):
         
