@@ -82,7 +82,7 @@ class CyclicalCosineLRScheduler(LRScheduler):
         # PyTorch LRSchedulers scale the *base_lr* of the optimizer. We will compute 
         # absolute values matching your Optax code, assuming the optimizer's initial LR
         # is just a placeholder or set to 1.0.
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, last_epoch)
 
     def _get_single_cycle_lr(self, step, cycle_idx):
         """Helper to compute the exact cosine decay for a specific step inside a given cycle."""
@@ -138,3 +138,112 @@ class CyclicalCosineLRScheduler(LRScheduler):
         
         # Return the target LR for every single parameter group in the optimizer
         return [target_lr for _ in self.base_lrs]
+    
+
+
+from torch.optim.lr_scheduler import LambdaLR
+ 
+ 
+def cosine_annealing(
+    optimizer,
+    total_steps,
+    warmup_frac=0.3,
+    peak_value=3e-4,
+    num_cycles=3,
+    gamma=0.7,
+    down=1e4,
+):
+    """
+    Multi-cycle cosine annealing schedule with warmup and exponential decay.
+    
+    Args:
+        total_steps: Total number of training steps
+        warmup_frac: Fraction of each cycle dedicated to warmup (default: 0.3)
+        peak_value: Peak learning rate (default: 3e-4)
+        num_cycles: Number of annealing cycles (default: 3)
+        gamma: Decay factor for peak_value between cycles (default: 0.7)
+        down: Divisor for final end_value (default: 1e4)
+    
+    Returns:
+        LambdaLR scheduler that can be used with PyTorch optimizers
+    
+    Example:
+        optimizer = torch.optim.Adam(model.parameters(), lr=1.0)
+        scheduler = cosine_annealing(
+            total_steps=1000,
+            warmup_frac=0.3,
+            peak_value=3e-4,
+        )
+        for epoch in range(num_epochs):
+            for batch in dataloader:
+                loss = train_step(batch)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+    """
+    
+    decay_steps = total_steps / num_cycles
+    
+    # Build schedule information for each cycle
+    cycles_info = []
+    current_init = peak_value / 10
+    current_end = peak_value / 10
+    current_peak = peak_value
+    
+    for cycle in range(num_cycles):
+        warmup_steps = decay_steps * warmup_frac
+        
+        if cycle < num_cycles - 1:
+            # Standard cycles: decay at end of cycle
+            next_init = current_end
+            next_end = current_end * gamma
+            next_peak = current_peak * gamma
+        else:
+            # Final cycle: aggressive final decay
+            next_init = current_end
+            next_end = current_end / down
+            next_peak = current_init  # Use init value as peak for final cycle
+        
+        cycles_info.append({
+            'init_value': current_init,
+            'warmup_steps': warmup_steps,
+            'peak_value': current_peak,
+            'decay_steps': decay_steps,
+            'end_value': current_end,
+        })
+        
+        current_init = next_init
+        current_end = next_end
+        current_peak = next_peak
+    
+    def lr_lambda(step):
+        """Learning rate multiplier as a function of step."""
+        # Determine which cycle we're in
+        cycle_idx = int(step / decay_steps)
+        cycle_idx = min(cycle_idx, num_cycles - 1)  # Clamp to last cycle
+        
+        # Position within the current cycle
+        step_in_cycle = step - cycle_idx * decay_steps
+        
+        info = cycles_info[cycle_idx]
+        warmup_steps = info['warmup_steps']
+        peak_value = info['peak_value']
+        init_value = info['init_value']
+        end_value = info['end_value']
+        decay_steps_cycle = info['decay_steps']
+        
+        # Warmup phase
+        if step_in_cycle < warmup_steps:
+            return (init_value + (peak_value - init_value) * step_in_cycle / warmup_steps) / peak_value
+        
+        # Cosine decay phase
+        progress = (step_in_cycle - warmup_steps) / (decay_steps_cycle - warmup_steps)
+        progress = min(progress, 1.0)  # Clamp to [0, 1]
+        
+        # Cosine annealing formula
+        lr = end_value + (peak_value - end_value) * 0.5 * (1 + math.cos(math.pi * progress))
+        
+        return lr / peak_value
+    
+    return LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)

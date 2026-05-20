@@ -107,33 +107,39 @@ class KNO_REG_GRID_1D(torch.nn.Module):
                 q_nodes, ### quad nodes
                 q_weights,     ### quad weights
                 f_q):
-            
+            # f_q is ( N) - one feature channel (vmapped over lift_dim)
+            # Evaluate the kernel
             G = (self.functional_forward(single_params=single_params, single_buffers=single_buffers, x_in=q_nodes, y_in=q_nodes)) * q_weights.T
-            f_q = torch.einsum('bq,kq->bk',f_q, G)
-            return f_q
+            # G is (N, N)
+            # Apply kernel: (N) @ (N, N) -> (N)
+            f_q = torch.einsum('q,kq->k',f_q, G)
+            return f_q  # (N)
         
-        f_q = f_x ### already at quad nodes # (B, N, 1)
+        f_q = f_x ### already at quad nodes # (N, 1)
         q_nodes = x_grid # (N, 1)
-        f_q = torch.concatenate((f_q, q_nodes.unsqueeze(0).expand(f_q.shape[0], -1, -1)), axis=-1) 
+        f_q = torch.concatenate((f_q, q_nodes), axis=-1) 
         f_q = self.lift_kernel(f_q)
         f_q = self.activation(f_q)
 
         for i in range(self.depth-1):
-            f_q_skip = self.pointwise_layers[i](f_q.permute(0, 2, 1)).permute(0, 2, 1) # (B, N, lift_dim) -> (B, N, lift_dim)
+            f_q_skip = self.pointwise_layers[i](f_q.T).T # (N, lift_dim) -> (N, lift_dim)
 
             single_params = self.params[i]
             single_buffers = self.buffers[i]
 
-            f_q = torch.vmap(lambda params, buffers, f: integration_transform(params, buffers, q_nodes, q_weights, f), in_dims=(0, 0, 2), out_dims=2)(single_params, single_buffers,f_q)
+            # Loop over the ensemble (lift_dim) and apply each kernel
+            f_q = torch.vmap(lambda params, buffers, f: integration_transform(params, buffers, q_nodes, q_weights, f), in_dims=(0, 0, 1), out_dims=1)(single_params, single_buffers, f_q)
                                                                                                 
             f_q = f_q_skip + f_q
             f_q = self.activation(f_q)
         
-        f_q_skip = self.pointwise_layers[-1](f_q.permute(0, 2, 1)).permute(0, 2, 1)
+        f_q_skip = self.pointwise_layers[-1](f_q.T).T
         
         single_params = self.params[-1]
         single_buffers = self.buffers[-1]
-        f_q = torch.vmap(lambda params, buffers, f: integration_transform(params, buffers, q_nodes, q_weights, f), in_dims=(0, 0, 2), out_dims=2)(single_params, single_buffers,f_q)
+        
+        # Loop over the ensemble (lift_dim) and apply each kernel
+        f_q = torch.vmap(lambda params, buffers, f: integration_transform(params, buffers, q_nodes, q_weights, f), in_dims=(0, 0, 1), out_dims=1)(single_params, single_buffers, f_q)
         f_q = f_q_skip + f_q
         
         f_q = self.activation(self.proj_layers[0](f_q))

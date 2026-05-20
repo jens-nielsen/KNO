@@ -13,7 +13,7 @@ import os
 import wandb
 
 
-from .utils import CyclicalCosineLRScheduler, UnitGaussianNormalizer, get_batch, shuffle
+from .utils import CyclicalCosineLRScheduler,cosine_annealing,  UnitGaussianNormalizer, get_batch, shuffle
 from .models import KNO_REG_GRID_1D
 from .kernels import kernels
 
@@ -73,7 +73,11 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr_max)
     # Simple scheduler to mimic cosine annealing if needed, 
     # but for now let's use a standard one.
-    scheduler = CyclicalCosineLRScheduler(optimizer, total_steps=args.epochs)
+
+    num_train_batches = len(x_train) // args.batch_size
+    num_steps = args.epochs * num_train_batches
+    scheduler = cosine_annealing(optimizer=optimizer, total_steps=num_steps, peak_value=args.lr_max)
+    # scheduler = CyclicalCosineLRScheduler(optimizer, total_steps=num_steps, peak_value=args.lr_max)
 
     # trapezoidal quadrature rule
     w = torch.zeros_like(x_grid.squeeze())
@@ -106,10 +110,10 @@ def main():
             
             # model expects (B, N, in_feats)
             # batch_x: (B, N), x_grid: (N, 1)
-            output = model(batch_x, x_grid, q_weights)
+            output = torch.vmap(lambda x: model(x, x_grid, q_weights))(batch_x)
             output = y_normalizer.decode(output)
             
-            loss = F.mse_loss(output, batch_y)
+            loss = ((batch_y - output)**2).sum(axis=-1).mean()
             train_rel_l2 = (torch.norm(batch_y - output, dim=1) / torch.norm(batch_y, dim=1)).mean()
             
             loss.backward()
@@ -117,7 +121,7 @@ def main():
             
             total_rel_l2 += train_rel_l2.item()
         
-        scheduler.step()
+            scheduler.step()
         
         avg_rel_l2 = total_rel_l2 / num_train_batches
         
@@ -133,10 +137,10 @@ def main():
                     bx, by = get_batch((x_test, y_test), i, args.test_batch_size)
                     bx, by = bx.to(device), by.to(device)
                     
-                    out = model(bx, x_grid, q_weights)
-                    out = y_normalizer.decode(out   )
+                    out = torch.vmap(lambda x: model(x, x_grid, q_weights))(bx)
+                    out = y_normalizer.decode(out)
                     
-                    test_l2 = F.mse_loss(out, by).item()
+                    test_l2 = ((by - out)**2).sum(axis=-1).mean().item()
                     test_rel_l2 = (torch.norm(by - out, dim=1) / torch.norm(by, dim=1)).mean()
                     test_rel_l2_total += test_rel_l2.item()
                 
