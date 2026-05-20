@@ -27,6 +27,48 @@ class KernelBaseClass(ABC):
         X,Y = x.reshape(-1, ndims), y.reshape(-1, ndims)
         k_xy = jax.vmap(jax.vmap(self.eval, (0, None)), (None, 0))(Y,X)
         return k_xy
+    
+class GreensSecondOrderKernel(eqx.Module, KernelBaseClass):
+    phi: eqx.Module
+    psi: eqx.Module
+    ndims: int
+
+    def __init__(
+        self,
+        *,
+        ndims: int,
+        latent_dim: int,
+        key,
+        **kwargs):
+        key,_ = jr.split(key)
+        self.ndims = ndims
+        self.phi = eqx.nn.MLP(key=key, 
+                                  in_size=ndims * 2, 
+                                  out_size=1, 
+                                  width_size=latent_dim, 
+                                  depth=1, 
+                                  activation=jax.nn.gelu, 
+                                  )
+
+
+        self.psi = eqx.nn.MLP(key=key, 
+                                  in_size= ndims * 2, 
+                                  out_size=1, 
+                                  width_size=latent_dim, 
+                                  depth=1, 
+                                  activation=jax.nn.gelu, 
+                                  )
+        
+    def singularity_func(self, x, y):
+        return jnp.log(jnp.linalg.norm(x-y) + 1e-7) if self.ndims == 2 else 1/(jnp.linalg.norm(x-y) + 1e-7)
+        
+    def eval(self, x, y):
+        
+        phi, psi = self.phi(jnp.concatenate([x, y])), self.psi(jnp.concatenate([x, y]))
+        out = self.singularity_func(x,y) * phi + psi
+        out = jnp.squeeze(out)
+        
+        return out    
 
 class GaussianKernel(eqx.Module, KernelBaseClass):
     scale: jax.Array
@@ -147,4 +189,5 @@ kernels = {'g': GaussianKernel,
            'ns_g': partial(NonstationaryGaussianKernel, latent_dim=8),
            'gsm': partial(GaussianSpectralMixtureKernel, base_kernel=GaussianKernel, q=2),
            'ns_gsm': partial(NonstationaryGaussianSpectralMixtureKernel, latent_dim=8, q=2),
+           'green': partial(GreensSecondOrderKernel, latent_dim=8)
            }
