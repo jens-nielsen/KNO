@@ -22,8 +22,9 @@ parser.add_argument('--depth', type=int, default=4)
 parser.add_argument('--test-batch-size', type=int, default=200)
 parser.add_argument('--int-kernel', type=str, default='ns_gsm', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green'])
 parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--print-every', type=int, default=1)
+parser.add_argument('--print-every', type=int, default=5)
 parser.add_argument('--eval-every', type=int, default=5)
+parser.add_argument('--wandb', action='store_true')
 
 args = parser.parse_args()
 print(args)
@@ -113,11 +114,13 @@ def eval(model, batch,):
 
 test_l2_best = 100.
 
-# wandb.init(
-#     project="KNO",
-#     config=vars(args),
-#     name="BurgerKNO",
-# )
+if args.wandb:
+
+    wandb.init(
+        project="KNO",
+        config=vars(args),
+        name="BurgerKNO_" + args.int_kernel,
+    )
 
 for epoch in tqdm(range(args.epochs)):
     key,_ = jr.split(key)
@@ -134,11 +137,13 @@ for epoch in tqdm(range(args.epochs)):
         test_l2, test_rel_l2 = eval(model, (x_test, y_test))
         print(f'test rel_l2: {test_rel_l2.item()*100:.3f}')
     
-    # wandb.log({"Train L2": train_loss, "Test L2": test_l2, "Train Rel L2": rel_l2, "Test Rel L2": test_rel_l2})
+    if args.wandb:
+        wandb.log({"Train L2": train_loss, "Test L2": test_l2, "Train Rel L2": rel_l2, "Test Rel L2": test_rel_l2})
 
 
-# wandb.finish()
+if args.wandb:
+    wandb.finish()
 
-eqx.tree_serialise_leaves("./saved_models/model.eqx", model)
+eqx.tree_serialise_leaves(f"./saved_models/BurgersKNO_{args.int_kernel}.eqx", model)
 # new_model = eqx.tree_deserialise_leaves("./saved_models/model.eqx", model)
 
