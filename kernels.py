@@ -65,14 +65,14 @@ class GreensSecondOrderKernel(eqx.Module, KernelBaseClass):
             return jnp.log(r)
         elif self.ndims == 1:
             r = jnp.absolute(x-y) + 1e-7
-            return jnp.log(r)
+            return r
         else:
             raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel")
         
     def eval(self, x, y):
         
         phi, psi = self.phi(jnp.concatenate([x, y])), self.psi(jnp.concatenate([x, y]))
-        out = self.singularity_func(x,y) 
+        out = phi * self.singularity_func(x,y) + psi
         out = jnp.squeeze(out)
         
         return out    

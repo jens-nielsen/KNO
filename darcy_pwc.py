@@ -8,6 +8,7 @@ from models import KNO_DARCY_PWC as model
 import argparse
 
 import wandb
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', type=int, default=10_000)
@@ -123,7 +124,7 @@ if args.wandb:
     )
 
 
-for epoch in range(args.epochs):
+for epoch in tqdm(range(args.epochs)):
     key,_ = jr.split(key)
 
     for batch_index in range(num_train_batches): 

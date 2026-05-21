@@ -8,3 +8,5 @@ datasets/darcy_2d_cheby_data.npz
 datasets/darcy_2d_uniform_data.npz
 venv/
 KNO_PyTorch/datasets
+logs/
+bash_scripts/
