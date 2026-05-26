@@ -4,7 +4,7 @@ import optax
 from utils import *
 from kernels import *
 import equinox as eqx
-from models import KNO_DARCY_PWC as model
+from models import KNO_DARCY_PWC_GREEN as model
 import matplotlib.pyplot as plt
 import argparse
 
@@ -18,7 +18,7 @@ parser.add_argument('--lr-max', type=float, default=0.001)
 parser.add_argument('--lift-dim', type=int, default=64)
 parser.add_argument('--depth', type=int, default=4)
 parser.add_argument('--test-batch-size', type=int, default=200)
-parser.add_argument('--int-kernel', type=str, default='ns_gsm', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green'])
+parser.add_argument('--int-kernel', type=str, default='green', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green'])
 parser.add_argument('--seed', type=int, default=4)
 parser.add_argument('--print-every', type=int, default=5)
 parser.add_argument('--eval-every', type=int, default=5)
@@ -67,7 +67,7 @@ num_steps = args.epochs * num_train_batches
 
 ## kernel setup
 integration_kernel = kernels[args.int_kernel]
-integration_kernel = partial(integration_kernel, ndims=1)
+integration_kernel = partial(integration_kernel, ndims=2)
 
 x_normalizer = UnitGaussianNormalizer(x_train)  
 x_train = x_normalizer.encode(x_train)
@@ -86,12 +86,19 @@ lr_schedule = cosine_annealing(num_steps, peak_value=args.lr_max)
 optimizer=optax.adam(lr_schedule)
 opt_state = optimizer.init(eqx.filter([model], is_trainable))
 
-### trapezoidal quad rule for res_1d, which is same as grid the function is on
-h = x_grid[1,0,0] - x_grid[0,0,0] 
-w = jnp.ones((res_1d,)) * h
-w = w.at[0].set(h/2)
-w = w.at[-1].set(h/2)
+## 2D Trapezoidal rule weights
+h = x_grid[1,0,0] - x_grid[0,0,0]
+w = jnp.ones((res_1d, res_1d)) * h*h
+w = w.at[0,0].set(h*h/4)
+w = w.at[0,-1].set(h*h/4)
+w = w.at[-1,0].set(h*h/4)
+w = w.at[-1,-1].set(h*h/4)
+w = w.at[0,1:-1].set(h*h/2)
+w = w.at[-1,1:-1].set(h*h/2)
+w = w.at[1:-1,0].set(h*h/2)
+w = w.at[1:-1,-1].set(h*h/2)
 q_weights = w.reshape(-1,1)
+
 
 param_count = sum(x.size for x in jax.tree.leaves(eqx.filter(model, is_trainable)))
 print(f'{param_count=}')

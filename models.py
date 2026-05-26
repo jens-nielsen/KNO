@@ -208,14 +208,19 @@ class KNO_DARCY_PWC(eqx.Module):
             G1 = int_kernel[0](q,q) * w.T
             G2 = int_kernel[1](q,q) * w.T
             f_q = (G1 @ f_q) + (f_q @ G2.T)
+            print(q.shape, G1.shape, w.shape, f_q.shape, G2.shape)
+            assert False
             return f_q
         
         q_nodes = x_grid[:,0,0] ## grab 1d x grid
 
         f_x = jnp.concatenate((f_x,x_grid), axis=-1) 
+        print(f_x.shape)
         f_x = f_x.reshape(-1,self.in_feats)
+        print(f_x.shape)
         f_x = eqx.filter_vmap(self.lift_kernel)(f_x)
         f_x = f_x.reshape(len(q_nodes), len(q_nodes), self.lift_dim).transpose(2,0,1)
+        print(f_x.shape)
         f_q = f_x
 
         for i in range(self.depth-1):
@@ -246,6 +251,190 @@ class KNO_DARCY_PWC(eqx.Module):
         f_y = f_q
         return f_y
     
+
+
+
+### 2d factorized model for green's function
+class KNO_DARCY_PWC_GREEN(eqx.Module):
+    integration_kernels: List[eqx.Module]
+    lift_kernel: eqx.Module
+    depth: int
+    proj_layers: eqx.Module
+    pointwise_layers: List[eqx.Module]
+    d: int
+    lift_dim: int
+    in_feats: int
+
+    def __init__(self,
+                 integration_kernel,
+                 depth,
+                 lift_dim,
+                 ndims,
+                 in_feats,
+                 key,
+    ):  
+        
+        keys = jr.split(key, 7)
+        
+        self.lift_dim = lift_dim
+        self.d = ndims
+
+        self.proj_layers = [eqx.nn.Linear(lift_dim, lift_dim, key=keys[0]),
+                            eqx.nn.Linear(lift_dim, lift_dim, key=keys[1]),
+                            eqx.nn.Linear(lift_dim, 1, key=keys[2])]
+        
+        self.pointwise_layers = [eqx.nn.Conv(1, lift_dim, lift_dim, 1, key=key) for key in jr.split(keys[3], depth)]
+
+        self.lift_kernel = eqx.nn.Linear(in_feats,lift_dim,key=keys[4])
+        self.integration_kernels = [clm(integration_kernel, lift_dim, k) for k in jr.split(keys[5],depth)]
+
+        self.in_feats = in_feats
+        self.depth = depth
+
+    def __call__(self, 
+                 f_x, ### input fn, note no batch dim 
+                 x_grid, 
+                 q_weights,
+                 ):
+
+        def integration_transform(int_kernel,
+                q, ### quad nodes
+                w,     ### quad weights
+                f_q):
+            
+            G = int_kernel(q,q) * w.T
+            f_q = jnp.einsum('ei, i->e',G, f_q.flatten()).reshape(q.shape[0], q.shape[1])
+            return f_q
+        
+
+        f_x = jnp.concatenate((f_x,x_grid), axis=-1)
+        f_x = f_x.reshape(-1,self.in_feats)
+        f_x = eqx.filter_vmap(self.lift_kernel)(f_x)
+        f_x = f_x.reshape(x_grid.shape[0], x_grid.shape[1], self.lift_dim).transpose(2,0,1)
+        f_q = f_x
+
+        for i in range(self.depth-1):
+
+            f_q_skip = self.pointwise_layers[i](f_q.reshape(self.lift_dim, -1))
+            f_q_skip = f_q_skip.reshape(f_q.shape)
+
+            f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,x_grid,q_weights,f), 
+                                 in_axes=(eqx.if_array(0),0), 
+                                 out_axes=0)(self.integration_kernels[i],
+                                             f_q)
+            f_q = f_q_skip + f_q
+            f_q = jax.nn.gelu(f_q)
+
+        f_q_skip = self.pointwise_layers[-1](f_q.reshape(self.lift_dim, -1))
+        f_q_skip = f_q_skip.reshape(f_q.shape)
+
+        f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,x_grid,q_weights,f), 
+                             in_axes=(eqx.if_array(0),0), 
+                             out_axes=0)(self.integration_kernels[-1],
+                                         f_q)
+        f_q = f_q + f_q_skip
+
+        f_q = f_q.transpose(1,2,0).reshape(-1,self.lift_dim)
+        f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[0])(f_q))
+        f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[1])(f_q))
+        f_q = eqx.filter_vmap(self.proj_layers[2])(f_q)
+        f_y = f_q
+        return f_y
+    
+    
+
+### 2d factorized model for regular grid / double grids
+class KNO_DARCY_PWC_DBGRID(eqx.Module):
+    integration_kernels: List[eqx.Module]
+    lift_kernel: eqx.Module
+    depth: int
+    proj_layers: eqx.Module
+    pointwise_layers: List[eqx.Module]
+    d: int
+    lift_dim: int
+    in_feats: int
+
+    def __init__(self,
+                 integration_kernel,
+                 depth,
+                 lift_dim,
+                 ndims,
+                 in_feats,
+                 key,
+    ):  
+        
+        keys = jr.split(key, 7)
+        
+        self.lift_dim = lift_dim
+        self.d = ndims
+
+        self.proj_layers = [eqx.nn.Linear(lift_dim, lift_dim, key=keys[0]),
+                            eqx.nn.Linear(lift_dim, lift_dim, key=keys[1]),
+                            eqx.nn.Linear(lift_dim, 1, key=keys[2])]
+        
+        self.pointwise_layers = [eqx.nn.Conv(1, lift_dim, lift_dim, 1, key=key) for key in jr.split(keys[3], depth)]
+
+        self.lift_kernel = eqx.nn.Linear(in_feats,lift_dim,key=keys[4])
+        self.integration_kernels = [(clm(integration_kernel, lift_dim, k1), 
+                                     clm(integration_kernel, lift_dim, k2)) for k in jr.split(keys[5],depth) for k1,k2 in [jr.split(k, ndims)]]
+
+        self.in_feats = in_feats
+        self.depth = depth
+
+    def __call__(self, 
+                 f_x, ### input fn, note no batch dim 
+                 x_grid, 
+                 eval_grid,
+                 q_weights,
+                 ):
+
+        def integration_transform(int_kernel,
+                q, ### integration nodes
+                e, ### evaluation nodes
+                w,     ### quad weights
+                f_q):
+            G1 = int_kernel[0](e,q) * w.T
+            G2 = int_kernel[1](e,q) * w.T
+            f_q = (G1 @ f_q) + (f_q @ G2.T)
+            return f_q
+        
+        q_nodes = x_grid[:,0,0] ## grab 1d x grid
+        e_nodes = eval_grid[:,0,0] ## grab 1d eval grid
+
+        f_x = jnp.concatenate((f_x,x_grid), axis=-1) 
+        f_x = f_x.reshape(-1,self.in_feats)
+        f_x = eqx.filter_vmap(self.lift_kernel)(f_x)
+        f_x = f_x.reshape(len(q_nodes), len(q_nodes), self.lift_dim).transpose(2,0,1)
+        f_q = f_x
+
+        for i in range(self.depth-1):
+
+            f_q_skip = self.pointwise_layers[i](f_q.reshape(self.lift_dim, -1))
+            f_q_skip = f_q_skip.reshape(f_q.shape)
+
+            f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,q_nodes,e_nodes,q_weights,f), 
+                                 in_axes=(eqx.if_array(0),0), 
+                                 out_axes=0)(self.integration_kernels[i],
+                                             f_q)
+            f_q = f_q_skip + f_q
+            f_q = jax.nn.gelu(f_q)
+
+        f_q_skip = self.pointwise_layers[-1](f_q.reshape(self.lift_dim, -1))
+        f_q_skip = f_q_skip.reshape(f_q.shape)
+
+        f_q = eqx.filter_vmap(lambda int_kernel, f: integration_transform(int_kernel,q_nodes,q_weights,f), 
+                             in_axes=(eqx.if_array(0),0), 
+                             out_axes=0)(self.integration_kernels[-1],
+                                         f_q)
+        f_q = f_q + f_q_skip
+
+        f_q = f_q.transpose(1,2,0).reshape(-1,self.lift_dim)
+        f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[0])(f_q))
+        f_q = jax.nn.gelu(eqx.filter_vmap(self.proj_layers[1])(f_q))
+        f_q = eqx.filter_vmap(self.proj_layers[2])(f_q)
+        f_y = f_q
+        return f_y
+
 ### 2D non-factorized model with trainable interpolant on both ends
 class KNO_DARCY_TRIANGLE(eqx.Module):
     input_kernel: eqx.Module

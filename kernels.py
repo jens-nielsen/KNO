@@ -61,7 +61,7 @@ class GreensSecondOrderKernel(eqx.Module, KernelBaseClass):
         
     def singularity_func(self, x, y):
         if self.ndims == 2:
-            r = jnp.absolute(x-y) + 1e-7
+            r = ((x-y)**2).mean(axis=-1) + 1e-7
             return jnp.log(r)
         elif self.ndims == 1:
             r = jnp.absolute(x-y) + 1e-7
@@ -70,7 +70,6 @@ class GreensSecondOrderKernel(eqx.Module, KernelBaseClass):
             raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel")
         
     def eval(self, x, y):
-        
         phi, psi = self.phi(jnp.concatenate([x, y])), self.psi(jnp.concatenate([x, y]))
         out = phi * self.singularity_func(x,y) + psi
         out = jnp.squeeze(out)

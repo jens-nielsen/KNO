@@ -1,10 +1,10 @@
 import jax
-from jax import numpy as jnp, random as jr, scipy as jsp
+from jax import numpy as jnp, random as jr
 import optax
 from utils import *
 from kernels import *
 import equinox as eqx
-from models import KNO_DARCY_PWC as model
+from models import KNO_DARCY_PWC_DBGRID as model
 import matplotlib.pyplot as plt
 import argparse
 
@@ -18,7 +18,7 @@ parser.add_argument('--lr-max', type=float, default=0.001)
 parser.add_argument('--lift-dim', type=int, default=64)
 parser.add_argument('--depth', type=int, default=4)
 parser.add_argument('--test-batch-size', type=int, default=200)
-parser.add_argument('--int-kernel', type=str, default='ns_gsm', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green'])
+parser.add_argument('--int-kernel', type=str, default='green', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green'])
 parser.add_argument('--seed', type=int, default=4)
 parser.add_argument('--print-every', type=int, default=5)
 parser.add_argument('--eval-every', type=int, default=5)
@@ -47,20 +47,6 @@ ntest = 200
 x_train, x_test = x[:ntrain], x[-ntest:]
 y_train, y_test = y[:ntrain], y[-ntest:]
 
-# For visualization only
-# print(f'{x_train.shape=}, {y_train.shape=}')
-
-# y_train = y_train.reshape(ntrain, res_1d, res_1d, codomain_dims)
-
-# fig, axes = plt.subplots(1, 2, figsize=(12, 10))
-# im1 = axes[0].contourf(x_grid[:,:,0], x_grid[:,:,1], x_train[1,:,:,0], levels=20, cmap='viridis')
-# plt.colorbar(im1, ax=axes[0])
-
-# im2 = axes[1].contourf(x_grid[:,:,0], x_grid[:,:,1], y_train[1,:,:,0], levels=20, cmap='viridis')
-# plt.colorbar(im2, ax=axes[1])
-
-# plt.show()
-# assert False
 
 num_train_batches = len(x_train) // args.batch_size
 num_steps = args.epochs * num_train_batches
@@ -96,6 +82,20 @@ q_weights = w.reshape(-1,1)
 param_count = sum(x.size for x in jax.tree.leaves(eqx.filter(model, is_trainable)))
 print(f'{param_count=}')
 
+## Evaluation Grid + Removing corner points
+
+print("Establishing evaluation grid and interpolating training data onto it...")
+
+x_eval_grid_1d = jnp.linspace(0,1,30)
+x_eval_grid = jnp.asarray(jnp.meshgrid(x_eval_grid_1d, x_eval_grid_1d, indexing='ij')).transpose(1,2,0).astype(DTYPE)
+
+x_eval_train = jax.image.resize(x_train[..., 0], shape=(x_train.shape[0], 30, 30), method='cubic')
+x_eval_test = jax.image.resize(x_test[..., 0], shape=(x_test.shape[0], 30, 30), method='cubic')
+
+print(x_eval_grid.shape, x_eval_train.shape, x_eval_test.shape)
+
+
+
 @eqx.filter_jit
 def train_step(model, opt_state, optimizer, batch, ):
     x,y = batch
@@ -103,6 +103,7 @@ def train_step(model, opt_state, optimizer, batch, ):
     def loss(model):
         y_pred = eqx.filter_vmap(lambda x: model(x,
                                                 x_grid,
+                                                x_eval_grid,
                                                 q_weights))(x)
         y_pred = y_pred.reshape(args.batch_size, -1)
         y_pred = y_normalizer.decode(y_pred)
@@ -120,7 +121,7 @@ def train_step(model, opt_state, optimizer, batch, ):
 def eval(model, batch,):
     x,y = batch
     def loss(model):
-        y_pred = jax.lax.map(lambda x: model(x, x_grid, q_weights),x, batch_size=args.test_batch_size) 
+        y_pred = jax.lax.map(lambda x: model(x, x_grid, x_eval_grid, q_weights),x, batch_size=args.test_batch_size) 
         y_pred = y_pred.reshape(ntest,-1)
         y_pred = y_normalizer.decode(y_pred)
         test_l2 = ((y - y_pred)**2).sum(axis=-1).mean()
