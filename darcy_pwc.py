@@ -132,10 +132,13 @@ def eval(model, batch,):
 
 
 if args.wandb:
-
+    
+    config = vars(args) 
+    config['param_count'] = param_count
+    
     wandb.init(
         project="KNO_PWC",
-        config=vars(args),
+        config=config,
         name="DarcyPWC_KNO_" + args.int_kernel,
     )
 
