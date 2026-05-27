@@ -86,8 +86,16 @@ lr_schedule = cosine_annealing(num_steps, peak_value=args.lr_max)
 optimizer=optax.adam(lr_schedule)
 opt_state = optimizer.init(eqx.filter([model], is_trainable))
 
+
+## evaluation grid
+eval_grid_n = 30 
+x_eval_grid_1d = jnp.linspace(0,1,eval_grid_n)
+x_eval_grid = jnp.asarray(jnp.meshgrid(x_eval_grid_1d, x_eval_grid_1d, indexing='ij')).transpose(1,2,0).astype(DTYPE)
+y_eval_train = jax.image.resize(y_train.reshape(ntrain, res_1d, res_1d, codomain_dims), shape=(ntrain, eval_grid_n, eval_grid_n, codomain_dims), method='cubic')
+y_eval_test = jax.image.resize(y_test.reshape(ntest, res_1d, res_1d, codomain_dims), shape=(ntest, eval_grid_n, eval_grid_n, codomain_dims), method='cubic')
+
 ## 2D Trapezoidal rule weights
-h = x_grid[1,0,0] - x_grid[0,0,0]
+h = x_eval_grid[1,0,0] - x_eval_grid[0,0,0]
 w = jnp.ones((res_1d, res_1d)) * h*h
 w = w.at[0,0].set(h*h/4)
 w = w.at[0,-1].set(h*h/4)
@@ -99,7 +107,6 @@ w = w.at[1:-1,0].set(h*h/2)
 w = w.at[1:-1,-1].set(h*h/2)
 q_weights = w.reshape(-1,1)
 
-
 param_count = sum(x.size for x in jax.tree.leaves(eqx.filter(model, is_trainable)))
 print(f'{param_count=}')
 
@@ -110,6 +117,7 @@ def train_step(model, opt_state, optimizer, batch, ):
     def loss(model):
         y_pred = eqx.filter_vmap(lambda x: model(x,
                                                 x_grid,
+                                                x_eval_grid,
                                                 q_weights))(x)
         y_pred = y_pred.reshape(args.batch_size, -1)
         y_pred = y_normalizer.decode(y_pred)
@@ -127,7 +135,7 @@ def train_step(model, opt_state, optimizer, batch, ):
 def eval(model, batch,):
     x,y = batch
     def loss(model):
-        y_pred = jax.lax.map(lambda x: model(x, x_grid, q_weights),x, batch_size=args.test_batch_size) 
+        y_pred = jax.lax.map(lambda x: model(x, x_grid, x_eval_grid, q_weights),x, batch_size=args.test_batch_size) 
         y_pred = y_pred.reshape(ntest,-1)
         y_pred = y_normalizer.decode(y_pred)
         test_l2 = ((y - y_pred)**2).sum(axis=-1).mean()
@@ -151,14 +159,14 @@ for epoch in tqdm(range(args.epochs)):
     key,_ = jr.split(key)
 
     for batch_index in range(num_train_batches): 
-        batch = get_batch(key, (x_train, y_train), batch_index, args.batch_size)
+        batch = get_batch(key, (x_train, y_eval_train), batch_index, args.batch_size)
         model, opt_state, train_loss, rel_l2 = train_step(model, opt_state, optimizer, batch)
 
     if (epoch % args.print_every) == 0 or (epoch == args.epochs - 1):
         print(f'{epoch=}, train rel_l2: {rel_l2.item()*100:.3f}')
         
     if (epoch % args.eval_every) == 0 or (epoch == args.epochs - 1):
-        test_l2, test_rel_l2 = eval(model, (x_test, y_test))
+        test_l2, test_rel_l2 = eval(model, (x_test, y_eval_test))
         print(f'test rel_l2: {test_rel_l2.item()*100:.3f}')
 
     if args.wandb:
