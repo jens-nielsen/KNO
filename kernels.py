@@ -116,7 +116,8 @@ class GreensSecondOrderKernelTorch(torch.nn.Module, KernelBaseClass):
     def eval(self, x, y):
         X_expanded = x.expand(-1, y.shape[1], -1)  
         Y_expanded = y.expand(x.shape[0], -1, -1)  
-        phi, psi = self.phi(torch.concatenate([X_expanded, Y_expanded], dim=-1)), self.psi(torch.concatenate([X_expanded, Y_expanded], dim=-1))
+        input = torch.concatenate([X_expanded, Y_expanded], dim=-1)
+        phi, psi = self.phi(input), self.psi(input)
 
         out = phi * self.singularity_func(X_expanded,Y_expanded) + psi
         out = torch.squeeze(out)
