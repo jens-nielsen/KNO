@@ -1,8 +1,9 @@
 import torch
 from utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch, get_batch_torch, partial
 from kernels import kernels
+from green_kernels import FastGreensSecondOrderKernelKeOps
 import numpy as np
-from models import KNO_DARCY_PWC_GREEN_TORCH as model_cls
+from models import KNO_DARCY_PWC_GREEN_TORCH, KNO_DARCY_PWC_GREEN_TORCH_FAST
 import argparse
 
 import wandb
@@ -15,7 +16,7 @@ parser.add_argument('--lr-max', type=float, default=0.001)
 parser.add_argument('--lift-dim', type=int, default=32)
 parser.add_argument('--depth', type=int, default=4)
 parser.add_argument('--test-batch-size', type=int, default=1)
-parser.add_argument('--int-kernel', type=str, default='green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green', 'green_torch'])
+parser.add_argument('--int-kernel', type=str, default='fast_green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green', 'green_torch', 'fast_green_torch'])
 parser.add_argument('--seed', type=int, default=4)
 parser.add_argument('--print-every', type=int, default=5)
 parser.add_argument('--eval-every', type=int, default=5)
@@ -49,8 +50,8 @@ num_train_batches = len(x_train) // args.batch_size
 num_steps = args.epochs * num_train_batches
 
 ## kernel setup
-integration_kernel = kernels[args.int_kernel]
-integration_kernel = partial(integration_kernel, ndims=2)
+# integration_kernel = kernels[args.int_kernel]
+integration_kernel = partial(FastGreensSecondOrderKernelKeOps, ndims=2, latent_dim=8, output_dim=args.lift_dim)
 
 x_normalizer = UnitGaussianNormalizerTorch(x_train)
 x_train = x_normalizer.encode(x_train)
@@ -59,6 +60,8 @@ y_normalizer = UnitGaussianNormalizerTorch(y_train)
 
 x_normalizer.to(device)
 y_normalizer.to(device)
+
+model_cls = KNO_DARCY_PWC_GREEN_TORCH_FAST
 
 in_feats = codomain_dims + domain_dims
 model = model_cls(integration_kernel, 
@@ -127,8 +130,7 @@ def train_step(model, optimizer, batch, device):
 def eval(model, batch,):
     x,y = batch
     def loss(model):
-        y_pred = model(x, x_grid, x_grid, q_weights)
-        # y_pred = jax.lax.map(lambda x: model(x, x_grid, x_eval_grid, q_weights),x, batch_size=args.test_batch_size) 
+        y_pred = model(x, x_grid, q_weights)
         y_pred = y_pred.reshape(ntest,-1)
         y_pred = y_normalizer.decode(y_pred)
         test_l2 = ((y - y_pred)**2).sum(axis=-1).mean()
@@ -147,9 +149,10 @@ if args.wandb:
         name="DarcyPWC_KNO_" + args.int_kernel,
     )
 
+# model.register_grid(x_grid, x_grid)
 
 for epoch in tqdm(range(args.epochs)):
-    for batch_index in range(num_train_batches): 
+    for batch_index in tqdm(range(num_train_batches)): 
         batch = get_batch_torch(epoch, (x_train, y_train), batch_index, args.batch_size)
         model, train_l2, train_rel_l2 = train_step(model, optimizer, batch, device)
 

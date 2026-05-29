@@ -113,34 +113,95 @@ class GreensSecondOrderKernelTorch(torch.nn.Module, KernelBaseClass):
         else:
             raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel")
         
-    def eval(self, x, y):
-        X_expanded = x.expand(-1, y.shape[1], -1)  
-        Y_expanded = y.expand(x.shape[0], -1, -1)  
-        input = torch.concatenate([X_expanded, Y_expanded], dim=-1)
-        phi, psi = self.phi(input), self.psi(input)
+    def eval(self, x):
+        # X_expanded = x.expand(-1, y.shape[1], -1)  
+        # Y_expanded = y.expand(x.shape[0], -1, -1)  
+        # input = torch.concatenate([X_expanded, Y_expanded], dim=-1)
+        phi, psi = self.phi(x), self.psi(x)
 
-        out = phi * self.singularity_func(X_expanded,Y_expanded) + psi
+        out = phi * self.singularity_func(x[..., 0], x[..., 1]) + psi
         out = torch.squeeze(out)
         
         return out    
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            if x.ndim == 1 or y.ndim == 1:
-                ndims = 1
-            else:
-                ndims = x.shape[-1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # if x.ndim == 1 or y.ndim == 1:
+            #     ndims = 1
+            # else:
+            #     ndims = x.shape[-1]
                 
-            # Reshape to (-1, ndims)
-            X = x.reshape(-1, ndims)
-            Y = y.reshape(-1, ndims)
+            # # Reshape to (-1, ndims)
+            # X = x.reshape(-1, ndims)
+            # Y = y.reshape(-1, ndims)
             
-            # Unsqueeze to align dimensions for broadcasting:
-            # X becomes (1, num_x, ndims)
-            # Y becomes (num_y, 1, ndims)
-            # self.eval will output a matrix of shape (num_y, num_x)
-            k_xy = self.eval(Y.unsqueeze(1), X.unsqueeze(0))
+            # # Unsqueeze to align dimensions for broadcasting:
+            # # X becomes (1, num_x, ndims)
+            # # Y becomes (num_y, 1, ndims)
+            # # self.eval will output a matrix of shape (num_y, num_x)
+            # k_xy = self.eval(Y.unsqueeze(1), X.unsqueeze(0))
+            k_xy = self.eval(x)
             
             return k_xy
+
+
+class Diagonal1DBlockMatrix(torch.nn.Module):
+    def __init__(self, size, block_length):
+        super().__init__()
+        self.diag = torch.nn.Parameter(torch.randn(size, block_length))
+        self.size = size
+        self.block_length = block_length
+
+    def forward(self, x):
+        # We assume x.shape = (n, m, size * block_length) 
+        inp = x.reshape(x.shape[0], x.shape[1], self.size, self.block_length)
+        out = torch.einsum('nmij,ij->nmi', inp, self.diag) # Sum over block length
+        return out
+class FastGreensSecondOrderKernelTorch(torch.nn.Module, KernelBaseClass):
+    phi: torch.nn.Module
+    psi: torch.nn.Module
+    ndims: int
+
+    def __init__(
+        self,
+        *,
+        ndims: int,
+        latent_dim: int,
+        output_dim: int,
+        **kwargs):
+        super().__init__()
+        self.ndims = ndims
+        self.latent_dim = latent_dim
+        self.output_dim = output_dim
+        self.phi = torch.nn.Sequential(
+            torch.nn.Linear(ndims*2, latent_dim*output_dim),
+            torch.nn.GELU(),
+            Diagonal1DBlockMatrix(size=output_dim, block_length=latent_dim)
+        )
+
+        self.psi = torch.nn.Sequential(
+            torch.nn.Linear(ndims*2, latent_dim*output_dim),
+            torch.nn.GELU(),
+            Diagonal1DBlockMatrix(size=output_dim, block_length=latent_dim)
+        )
+        
+    def singularity_func(self, x, y):
+        if self.ndims == 2:
+            r = ((x-y)**2).mean(axis=-1, keepdims=True) + 1e-7
+            return torch.log(r)
+        elif self.ndims == 1:
+            r = torch.absolute(x-y) + 1e-7
+            return r
+        else:
+            raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel") 
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+            
+            phi, psi = self.phi(x), self.psi(x)
+            out = phi * self.singularity_func(x[..., 0], x[..., 1]) + psi
+            out = torch.squeeze(out)
+            
+            return out
+
 
 class GaussianKernel(eqx.Module, KernelBaseClass):
     scale: jax.Array
@@ -262,5 +323,6 @@ kernels = {'g': GaussianKernel,
            'gsm': partial(GaussianSpectralMixtureKernel, base_kernel=GaussianKernel, q=2),
            'ns_gsm': partial(NonstationaryGaussianSpectralMixtureKernel, latent_dim=8, q=2),
            'green': partial(GreensSecondOrderKernel, latent_dim=8),
-           'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8)
+           'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8),
+           'fast_green_torch': partial(FastGreensSecondOrderKernelTorch, latent_dim=8)
            }

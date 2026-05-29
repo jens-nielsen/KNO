@@ -405,7 +405,7 @@ class KNO_DARCY_PWC_GREEN_TORCH(torch.nn.Module):
         self.depth = depth
 
 
-        self.parallel_forward = vmap(self.compute_single_model, in_dims=(None, 0, 0, None, None))
+        self.parallel_forward = vmap(self.compute_single_model, in_dims=(None, 0, 0, None))
 
     def clmt(self, kernel, n, device):
         models = torch.nn.ModuleList([kernel() for _ in range(n)]).to(device)
@@ -420,8 +420,93 @@ class KNO_DARCY_PWC_GREEN_TORCH(torch.nn.Module):
         # in_dims specifies which dimensions to map over. 
         # (0, 0, None) means: map over the stacked params/buffers, but reuse the SAME input x
 
-    def compute_single_model(self, base_model, params, buffers, q, e):
-        return functional_call(base_model, (params, buffers), (q, e))
+    def compute_single_model(self, base_model, params, buffers, q):
+        return functional_call(base_model, (params, buffers), q)
+    
+    def register_grid(self, x_grid, eval_grid):
+        X = x_grid.reshape(-1, x_grid.shape[-1]).unsqueeze(1)  # shape (N, 1, d)
+        Y = eval_grid.reshape(-1, eval_grid.shape[-1]).unsqueeze(0)  # shape (1, M, d)
+        X_expanded = X.expand(-1, Y.shape[1], -1)  
+        Y_expanded = Y.expand(X.shape[0], -1, -1)  
+        self.x_grid_shape = x_grid.shape
+        self.eval_grid_shape = eval_grid.shape
+        self.input = torch.concatenate([X_expanded, Y_expanded], dim=-1)
+        
+
+    def __call__(self, 
+                 f_x, ### input fn, note no batch dim 
+                 x_grid, 
+                 q_weights,
+                 ):
+        
+        f_x = torch.concatenate((f_x,x_grid.unsqueeze(0).expand(*f_x.shape[0:-1], x_grid.shape[-1])), axis=-1)
+        f_x = self.lift_kernel(f_x)
+        f_q = f_x
+
+        for i in range(self.depth):
+
+            f_q_skip = self.pointwise_layers[i](f_q.permute(0,3,1,2)).permute(0,2,3,1)
+            f_q_skip = f_q_skip.reshape(f_q.shape)
+
+            int_kernel = self.parallel_forward(self.integration_kernels[i][0][0], self.integration_kernels[i][1], self.integration_kernels[i][2], self.input)
+            weighted_int_kernel = torch.einsum('lei,i->lei', int_kernel, q_weights.flatten())
+            f_q = torch.einsum('lei,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], self.eval_grid_shape[0], self.eval_grid_shape[1], self.lift_dim)
+
+            f_q = f_q_skip + f_q
+            if i < self.depth - 1:
+                f_q = torch.nn.functional.gelu(f_q)
+
+        f_q = torch.nn.functional.gelu(self.proj_layers[0](f_q))
+        f_q = torch.nn.functional.gelu(self.proj_layers[1](f_q))
+        f_q = self.proj_layers[2](f_q)
+        f_y = f_q
+        return f_y
+    
+
+class KNO_DARCY_PWC_GREEN_TORCH_FAST(torch.nn.Module):
+    integration_kernels: List[torch.nn.Module]
+    lift_kernel: torch.nn.Module
+    depth: int
+    proj_layers: torch.nn.Module
+    pointwise_layers: List[torch.nn.Module]
+    d: int
+    lift_dim: int
+    in_feats: int
+  
+
+    def __init__(self,
+                 integration_kernel,
+                 depth,
+                 lift_dim,
+                 ndims,
+                 in_feats,
+                 device
+    ):  
+        super().__init__()
+        # keys = jr.split(key, 7)
+        
+        self.lift_dim = lift_dim
+        self.d = ndims
+
+        self.proj_layers = torch.nn.ModuleList([
+            torch.nn.Linear(lift_dim, lift_dim),
+            torch.nn.Linear(lift_dim, lift_dim),
+            torch.nn.Linear(lift_dim, 1)
+        ])
+
+        # self.pointwise_layers = [eqx.nn.Conv(1, lift_dim, lift_dim, 1, key=key) for key in jr.split(keys[3], depth)]
+        self.pointwise_layers = torch.nn.ModuleList([torch.nn.Conv2d(lift_dim, lift_dim, kernel_size=1, padding=0) for _ in range(depth)])
+
+        # self.lift_kernel = eqx.nn.Linear(in_feats,lift_dim,key=keys[4])
+        self.lift_kernel = torch.nn.Linear(in_feats, lift_dim)
+
+    
+        # self.integration_kernels = [clm(integration_kernel, lift_dim, k) for k in jr.split(keys[5],depth)]
+        self.integration_kernels = torch.nn.ModuleList([integration_kernel() for _ in range(depth)])
+
+        self.in_feats = in_feats
+        self.depth = depth
+        
 
     def __call__(self, 
                  f_x, ### input fn, note no batch dim 
@@ -434,26 +519,18 @@ class KNO_DARCY_PWC_GREEN_TORCH(torch.nn.Module):
         f_x = self.lift_kernel(f_x)
         f_q = f_x
 
-        for i in range(self.depth-1):
+        for i in range(self.depth):
 
             f_q_skip = self.pointwise_layers[i](f_q.permute(0,3,1,2)).permute(0,2,3,1)
             f_q_skip = f_q_skip.reshape(f_q.shape)
 
-            int_kernel = self.parallel_forward(self.integration_kernels[i][0][0], self.integration_kernels[i][1], self.integration_kernels[i][2], x_grid, eval_grid)
-            weighted_int_kernel = torch.einsum('lei,i->lei', int_kernel, q_weights.flatten())
-            f_q = torch.einsum('lei,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], eval_grid.shape[0], eval_grid.shape[1], self.lift_dim)
+            f_q = self.integration_kernels[i](x_grid.flatten(end_dim=-2), eval_grid.flatten(end_dim=-2), q_weights.flatten(), f_q.flatten(start_dim=1,end_dim=2))
+            # weighted_int_kernel = torch.einsum('eil,i->eil', int_kernel, q_weights.flatten())
+            # f_q = torch.einsum('eil,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], eval_grid.shape[0], eval_grid.shape[1], self.lift_dim)
 
             f_q = f_q_skip + f_q
-            f_q = torch.nn.functional.gelu(f_q)
-
-        f_q_skip = self.pointwise_layers[-1](f_q.permute(0,3,1,2)).permute(0,2,3,1)
-        f_q_skip = f_q_skip.reshape(f_q.shape)
-
-        int_kernel = self.parallel_forward(self.integration_kernels[-1][0][0], self.integration_kernels[-1][1], self.integration_kernels[-1][2], x_grid, eval_grid)
-        weighted_int_kernel = torch.einsum('lei,i->lei', int_kernel, q_weights.flatten())
-        f_q = torch.einsum('lei,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], eval_grid.shape[0], eval_grid.shape[1], self.lift_dim)
-
-        f_q = f_q + f_q_skip
+            if i < self.depth - 1:
+                f_q = torch.nn.functional.gelu(f_q)
 
         f_q = torch.nn.functional.gelu(self.proj_layers[0](f_q))
         f_q = torch.nn.functional.gelu(self.proj_layers[1](f_q))
