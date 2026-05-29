@@ -1,10 +1,8 @@
 import torch
-import optax
-from utils import *
-from kernels import *
-import equinox as eqx
+from utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch, get_batch_torch, partial
+from kernels import kernels
+import numpy as np
 from models import KNO_DARCY_PWC_GREEN_TORCH as model_cls
-import matplotlib.pyplot as plt
 import argparse
 
 import wandb
@@ -14,9 +12,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', type=int, default=10_000)
 parser.add_argument('--batch-size', type=int, default=100)
 parser.add_argument('--lr-max', type=float, default=0.001)
-parser.add_argument('--lift-dim', type=int, default=64)
+parser.add_argument('--lift-dim', type=int, default=32)
 parser.add_argument('--depth', type=int, default=4)
-parser.add_argument('--test-batch-size', type=int, default=200)
+parser.add_argument('--test-batch-size', type=int, default=1)
 parser.add_argument('--int-kernel', type=str, default='green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green', 'green_torch'])
 parser.add_argument('--seed', type=int, default=4)
 parser.add_argument('--print-every', type=int, default=5)
@@ -47,21 +45,6 @@ ntest = 200
 x_train, x_test = x[:ntrain], x[-ntest:]
 y_train, y_test = y[:ntrain], y[-ntest:]
 
-# For visualization only
-# print(f'{x_train.shape=}, {y_train.shape=}')
-
-# y_train = y_train.reshape(ntrain, res_1d, res_1d, codomain_dims)
-
-# fig, axes = plt.subplots(1, 2, figsize=(12, 10))
-# im1 = axes[0].contourf(x_grid[:,:,0], x_grid[:,:,1], x_train[1,:,:,0], levels=20, cmap='viridis')
-# plt.colorbar(im1, ax=axes[0])
-
-# im2 = axes[1].contourf(x_grid[:,:,0], x_grid[:,:,1], y_train[1,:,:,0], levels=20, cmap='viridis')
-# plt.colorbar(im2, ax=axes[1])
-
-# plt.show()
-# assert False
-
 num_train_batches = len(x_train) // args.batch_size
 num_steps = args.epochs * num_train_batches
 
@@ -87,7 +70,6 @@ model = model_cls(integration_kernel,
 
 
 optimizer=torch.optim.Adam(model.parameters(), lr=args.lr_max)
-lr_schedule = cosine_annealing(num_steps, peak_value=args.lr_max)
 lr_scheduler = CosineAnnealingWarmupRestarts(
     optimizer=optimizer,
     total_steps=100_000,   # Example total steps
@@ -175,10 +157,9 @@ for epoch in tqdm(range(args.epochs)):
         print(f'{epoch=}, train rel_l2: {train_rel_l2.item()*100:.3f}')
         
     if (epoch % args.eval_every) == 0 or (epoch == args.epochs - 1):
-        test_l2, test_rel_l2 = eval(model, (x_test, y_test))
+        test_l2, test_rel_l2 = eval(model, (x_test.to(device), y_test.to(device)))
         print(f'test rel_l2: {test_rel_l2.item()*100:.3f}')
 
-    assert False
     if args.wandb:
         wandb.log({"Train L2": train_l2, "Test L2": test_l2, "Train Rel L2": train_rel_l2, "Test Rel L2": test_rel_l2})
 

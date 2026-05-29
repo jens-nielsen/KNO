@@ -6,6 +6,7 @@ import equinox as eqx
 from typing import List, Callable
 
 import torch
+from tqdm import tqdm
 from utils import create_lifted_module as clm
 from utils import create_lifted_module_torch as clmt
 
@@ -428,16 +429,6 @@ class KNO_DARCY_PWC_GREEN_TORCH(torch.nn.Module):
                  eval_grid,
                  q_weights,
                  ):
-
-        def integration_transform(int_kernel,
-                q, ### quad nodes
-                e,
-                w,     ### quad weights
-                f_q):
-            
-            G = int_kernel(q,e) * w.T
-            f_q = torch.einsum('ei, bi->be',G, f_q.flatten(start_dim=1)).reshape(f_q.shape[0], e.shape[0], e.shape[1])
-            return f_q
         
         f_x = torch.concatenate((f_x,x_grid.unsqueeze(0).expand(*f_x.shape[0:-1], x_grid.shape[-1])), axis=-1)
         f_x = self.lift_kernel(f_x)
