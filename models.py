@@ -434,7 +434,7 @@ class KNO_DARCY_PWC_GREEN_TORCH(torch.nn.Module):
         
 
     def __call__(self, 
-                 f_x, ### input fn, note no batch dim 
+                 f_x,
                  x_grid, 
                  q_weights,
                  ):
@@ -507,6 +507,15 @@ class KNO_DARCY_PWC_GREEN_TORCH_FAST(torch.nn.Module):
         self.in_feats = in_feats
         self.depth = depth
         
+    def register_grid(self, x_grid, eval_grid):
+        X = x_grid.reshape(-1, x_grid.shape[-1]).unsqueeze(1)  # shape (N, 1, d)
+        Y = eval_grid.reshape(-1, eval_grid.shape[-1]).unsqueeze(0)  # shape (1, M, d)
+        X_expanded = X.expand(-1, Y.shape[1], -1)  
+        Y_expanded = Y.expand(X.shape[0], -1, -1)  
+        self.x_grid_shape = x_grid.shape
+        self.eval_grid_shape = eval_grid.shape
+        self.input = torch.concatenate([X_expanded, Y_expanded], dim=-1)
+        
 
     def __call__(self, 
                  f_x, ### input fn, note no batch dim 
@@ -524,9 +533,9 @@ class KNO_DARCY_PWC_GREEN_TORCH_FAST(torch.nn.Module):
             f_q_skip = self.pointwise_layers[i](f_q.permute(0,3,1,2)).permute(0,2,3,1)
             f_q_skip = f_q_skip.reshape(f_q.shape)
 
-            f_q = self.integration_kernels[i](x_grid.flatten(end_dim=-2), eval_grid.flatten(end_dim=-2), q_weights.flatten(), f_q.flatten(start_dim=1,end_dim=2))
-            # weighted_int_kernel = torch.einsum('eil,i->eil', int_kernel, q_weights.flatten())
-            # f_q = torch.einsum('eil,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], eval_grid.shape[0], eval_grid.shape[1], self.lift_dim)
+            # f_q = self.integration_kernels[i](x_grid.flatten(end_dim=-2), eval_grid.flatten(end_dim=-2), q_weights.flatten(), f_q.flatten(start_dim=1,end_dim=2))
+            weighted_int_kernel = torch.einsum('eil,i->eil', self.integration_kernels[i](self.input), q_weights.flatten())
+            f_q = torch.einsum('eil,bil->bel', weighted_int_kernel, f_q.flatten(start_dim=1, end_dim=2)).reshape(f_q.shape[0], eval_grid.shape[0], eval_grid.shape[1], self.lift_dim)
 
             f_q = f_q_skip + f_q
             if i < self.depth - 1:

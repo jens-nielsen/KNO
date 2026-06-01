@@ -186,10 +186,10 @@ class FastGreensSecondOrderKernelTorch(torch.nn.Module, KernelBaseClass):
         
     def singularity_func(self, x, y):
         if self.ndims == 2:
-            r = ((x-y)**2).mean(axis=-1, keepdims=True) + 1e-7
+            r = ((x-y)**2).mean(axis=-1, keepdims=True) + 1e-20
             return torch.log(r)
         elif self.ndims == 1:
-            r = torch.absolute(x-y) + 1e-7
+            r = torch.absolute(x-y) + 1e-20
             return r
         else:
             raise NotImplementedError("Only 1D and 2D supported for GreensSecondOrderKernel") 
@@ -197,10 +197,72 @@ class FastGreensSecondOrderKernelTorch(torch.nn.Module, KernelBaseClass):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
             
             phi, psi = self.phi(x), self.psi(x)
-            out = phi * self.singularity_func(x[..., 0], x[..., 1]) + psi
+            out = phi * self.singularity_func(x[..., 0:self.ndims], x[..., self.ndims:2*self.ndims]) + psi
             out = torch.squeeze(out)
-            
             return out
+    
+class Diagonal2DBlockMatrix(torch.nn.Module):
+    def __init__(self, size, output_length, block_length):
+        # 
+        super().__init__()
+        self.diag = torch.nn.Parameter(torch.randn(size, output_length, block_length))
+        self.size = size
+        self.output_length = output_length
+        self.block_length = block_length
+
+    def forward(self, x):
+        # We assume x.shape = (n, m, input_size * block_length) -> (n, m, input_size, block_length) 
+        # we want self.diag to be (output_size, input_size, block_length)
+        inp = x.reshape(x.shape[0], x.shape[1], self.size, self.block_length)
+        out = torch.einsum('nmij,ioj->nmio', inp, self.diag) # Sum over block length
+        return out
+
+
+class NonstationaryGaussianSpectralMixtureKernelTorch(torch.nn.Module, KernelBaseClass):
+    weights: torch.nn.Module
+    q: int
+
+    def __init__(
+        self,
+        *,
+        ndims: int,
+        q: int,
+        latent_dim: int,
+        output_dim: int,
+        **kwargs):
+        super().__init__()
+        self.q = q
+        self.ndims = ndims
+        self.output_dim = output_dim
+        self.weights = torch.nn.Sequential(
+            torch.nn.Linear(ndims, latent_dim*output_dim),
+            torch.nn.SELU(),
+            Diagonal2DBlockMatrix(size=output_dim , output_length=(q + q + (q*ndims)), block_length=latent_dim),
+            torch.nn.Softplus(),
+        )
+
+        
+    def forward(self, x):
+        x_ = x[..., 0:self.ndims]
+
+        y_ = x[..., self.ndims:2*self.ndims]
+        q = self.q
+
+        all_x = self.weights(x_).reshape(*x.shape[0:2], self.output_dim, q + q + (q*self.ndims))
+        all_y =  self.weights(y_).reshape(*x.shape[0:2], self.output_dim, q + q + (q*self.ndims))
+        wx, wy = all_x[..., :q], all_y[..., :q]
+        sx,sy = all_x[..., q:2*q], all_y[..., q:2*q]
+        fx,fy = all_x[..., 2*q:].reshape(*all_x.shape[0:2], self.output_dim, q, self.ndims), all_y[..., 2*q:].reshape(*all_x.shape[0:2], self.output_dim, q, self.ndims)
+        
+        k_gibbs = (torch.sqrt(2 * sx * sy) / (sx**2 + sy**2)) * torch.exp(
+            -(torch.sum((x_ - y_) ** 2, dim=-1, keepdim=True).unsqueeze(-1).expand_as(sx)) / (sx**2 + sy**2)
+        )
+        cosine = torch.cos(2 * torch.pi * (torch.einsum('ijcqn, ijn -> ijcq',fx, x_) - torch.einsum('ijcqn, ijn -> ijcq',fy, y_)))
+        k_xy = torch.sum(wx * wy * k_gibbs * cosine, dim=-1)  # sum over mixtures
+
+        return k_xy    
+    
+
 
 
 class GaussianKernel(eqx.Module, KernelBaseClass):
@@ -317,11 +379,14 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
         k_xy = (wx * wy * k_gibbs * cosine).sum()  # sum over mixtures
         return k_xy    
     
+
+    
 kernels = {'g': GaussianKernel,
            'a_g': AnisotropicGaussianKernel,
            'ns_g': partial(NonstationaryGaussianKernel, latent_dim=8),
            'gsm': partial(GaussianSpectralMixtureKernel, base_kernel=GaussianKernel, q=2),
            'ns_gsm': partial(NonstationaryGaussianSpectralMixtureKernel, latent_dim=8, q=2),
+           'ns_gsm_torch': partial(NonstationaryGaussianSpectralMixtureKernelTorch, latent_dim=8, q=2),
            'green': partial(GreensSecondOrderKernel, latent_dim=8),
            'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8),
            'fast_green_torch': partial(FastGreensSecondOrderKernelTorch, latent_dim=8)

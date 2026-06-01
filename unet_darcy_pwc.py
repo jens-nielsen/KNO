@@ -1,10 +1,9 @@
 import torch
 import time
 from utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch, partial
-from kernels import GreensSecondOrderKernelTorch, FastGreensSecondOrderKernelTorch
-# from green_kernels import FastGreensSecondOrderKernelKeOps
+from kernels import FastGreensSecondOrderKernelTorch, kernels
 import numpy as np
-from models import KNO_DARCY_PWC_GREEN_TORCH, KNO_DARCY_PWC_GREEN_TORCH_FAST
+from unet_models import KNO_UNET_GREEN_2D
 import argparse
 
 import wandb
@@ -12,12 +11,12 @@ from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', type=int, default=10_000)
-parser.add_argument('--batch-size', type=int, default=10)
+parser.add_argument('--batch-size', type=int, default=100)
 parser.add_argument('--lr-max', type=float, default=0.001)
-parser.add_argument('--lift-dim', type=int, default=32)
+parser.add_argument('--lift-dim', type=int, default=64)
 parser.add_argument('--depth', type=int, default=4)
 parser.add_argument('--test-batch-size', type=int, default=1)
-parser.add_argument('--int-kernel', type=str, default='fast_green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'green', 'green_torch', 'fast_green_torch'])
+parser.add_argument('--int-kernel', type=str, default='fast_green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'ns_gsm_torch', 'green', 'green_torch', 'fast_green_torch'])
 parser.add_argument('--seed', type=int, default=4)
 parser.add_argument('--print-every', type=int, default=5)
 parser.add_argument('--eval-every', type=int, default=5)
@@ -51,8 +50,11 @@ num_train_batches = len(x_train) // args.batch_size
 num_steps = args.epochs * num_train_batches
 
 ## kernel setup
-# integration_kernel = kernels[args.int_kernel]
-integration_kernel = partial(FastGreensSecondOrderKernelTorch, ndims=2, latent_dim=8, output_dim=args.lift_dim)
+integration_kernel = kernels[args.int_kernel]
+if args.int_kernel in ['green', 'green_torch', 'fast_green_torch', "ns_gsm_torch"]:
+    integration_kernel = partial(integration_kernel, ndims=2, output_dim=args.lift_dim)
+else:
+    integration_kernel = partial(integration_kernel, ndims=2)
 
 x_normalizer = UnitGaussianNormalizerTorch(x_train)
 x_train = x_normalizer.encode(x_train)
@@ -62,7 +64,7 @@ y_normalizer = UnitGaussianNormalizerTorch(y_train)
 x_normalizer.to(device)
 y_normalizer.to(device)
 
-model_cls = KNO_DARCY_PWC_GREEN_TORCH_FAST
+model_cls = KNO_UNET_GREEN_2D
 
 in_feats = codomain_dims + domain_dims
 model = model_cls(integration_kernel, 
@@ -84,26 +86,6 @@ lr_scheduler = CosineAnnealingWarmupRestarts(
     down=1e4
 )
 
-## evaluation grid
-eval_grid_n = 30 
-x_eval_grid_1d = torch.linspace(0,1,eval_grid_n, dtype=DTYPE)
-x_eval_grid = torch.stack(torch.meshgrid(x_eval_grid_1d, x_eval_grid_1d, indexing='ij')).permute(1, 2, 0)
-y_eval_train = torch.nn.functional.interpolate(y_train.reshape(ntrain, res_1d, res_1d, codomain_dims).permute(0,3,1,2), size=(eval_grid_n, eval_grid_n), mode='bicubic').permute(0,2,3,1)
-y_eval_test = torch.nn.functional.interpolate(y_test.reshape(ntest, res_1d, res_1d, codomain_dims).permute(0,3,1,2), size=(eval_grid_n, eval_grid_n), mode='bicubic').permute(0,2,3,1)
-
-## 2D Trapezoidal rule weights
-h = x_eval_grid[1,0,0] - x_eval_grid[0,0,0]
-w = torch.ones((res_1d, res_1d)) * h*h
-w[0,0] = h*h/4
-w[0,-1] = h*h/4
-w[-1,0] = h*h/4
-w[-1,-1] = h*h/4
-w[0,1:-1] = h*h/2
-w[-1,1:-1] = h*h/2
-w[1:-1,0] = h*h/2
-w[1:-1,-1] = h*h/2
-q_weights = w.reshape(-1,1).to(device)
-
 # param_count = sum(x.size for x in jax.tree.leaves(eqx.filter(model, is_trainable)))
 param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'{param_count=}')
@@ -112,7 +94,8 @@ def train_step(model, optimizer, batch, device):
     x,y = batch
     x = x.to(device)
     y = y.to(device)
-    y_pred = model(x, x_grid, x_grid, q_weights)
+    x = torch.concatenate((x,x_grid.unsqueeze(0).expand(*x.shape[0:-1], x_grid.shape[-1])), axis=-1)
+    y_pred = model(x)
     y_pred = y_pred.reshape(args.batch_size, -1)
     y_pred = y_normalizer.decode(y_pred)
     train_l2 =  ((y - y_pred)**2).sum(axis=-1).mean()
@@ -130,7 +113,8 @@ def train_step(model, optimizer, batch, device):
 
 def eval(model, batch,):
     x,y = batch
-    y_pred = model(x, x_grid, x_grid, q_weights)
+    x = torch.concatenate((x,x_grid.unsqueeze(0).expand(*x.shape[0:-1], x_grid.shape[-1])), axis=-1)
+    y_pred = model(x)
     y_pred = y_pred.reshape(ntest,-1)
     y_pred = y_normalizer.decode(y_pred)
     test_l2 = ((y - y_pred)**2).sum(axis=-1).mean()
@@ -146,15 +130,13 @@ if args.wandb:
         name="DarcyPWC_KNO_" + args.int_kernel,
     )
 
-if args.int_kernel in ['green', 'green_torch', 'fast_green_torch']:
-    model.register_grid(x_grid, x_grid)
+model.register_grid(x_grid.shape, device)
 
 trainloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_train, y_train), batch_size=args.batch_size, shuffle=True)
 
 for epoch in tqdm(range(args.epochs)):
-    for batch in tqdm(trainloader, desc=f'Epoch {epoch}', leave=False): 
+    for batch in trainloader: 
         train_l2, train_rel_l2 = train_step(model, optimizer, batch, device)
-        assert False
 
     if (epoch % args.print_every) == 0 or (epoch == args.epochs - 1):
         print(f'{epoch=}, train rel_l2: {train_rel_l2*100:.3f}')
