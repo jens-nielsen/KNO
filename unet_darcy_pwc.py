@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 from torch_utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch
 from torch_kernels import kernels
