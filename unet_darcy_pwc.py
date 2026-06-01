@@ -150,4 +150,4 @@ for epoch in tqdm(range(args.epochs)):
 if args.wandb:
     wandb.finish()
 
-# eqx.tree_serialise_leaves(f"./saved_models/DarcyPWC_{args.int_kernel}.eqx", model)
+torch.save(model.state_dict(), f"./saved_models/DarcyPWC_{args.int_kernel}.pth")
