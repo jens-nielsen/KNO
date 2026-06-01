@@ -1,7 +1,6 @@
 import torch
-import time
-from utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch, partial
-from kernels import FastGreensSecondOrderKernelTorch, kernels
+from torch_utils import CosineAnnealingWarmupRestarts, UnitGaussianNormalizerTorch
+from torch_kernels import kernels
 import numpy as np
 from unet_models import KNO_UNET_GREEN_2D
 import argparse
