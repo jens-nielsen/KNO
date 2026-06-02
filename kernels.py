@@ -198,7 +198,7 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
         cosine = jnp.cos(2 * jnp.pi * (fx @ x - fy @ y))
         k_xy = (wx * wy * k_gibbs * cosine).sum()  # sum over mixtures
         if self.discontinuous:
-            k_xy = jnp.nn.leaky_relu(k_xy)
+            k_xy = jax.nn.leaky_relu(k_xy)
         return k_xy    
     
 
