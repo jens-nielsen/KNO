@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     ## kernel setup
     integration_kernel = kernels[args.int_kernel]
-    if args.int_kernel in ['green', 'green_torch', 'fast_green_torch', "ns_gsm_torch"]:
+    if args.int_kernel in ['green', 'green_torch', 'fast_green_torch', "ns_gsm_torch", "fundamental_torch"]:
         integration_kernel = partial(integration_kernel, ndims=2, output_dim=args.lift_dim)
     else:
         integration_kernel = partial(integration_kernel, ndims=2)

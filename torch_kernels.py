@@ -127,18 +127,18 @@ class FastGreensSecondOrderKernelTorch(torch.nn.Module):
             return out
     
 class Diagonal2DBlockMatrix(torch.nn.Module):
-    def __init__(self, size, output_length, block_length):
+    def __init__(self, input_size, output_block_length, input_block_length):
         # 
         super().__init__()
-        self.diag = torch.nn.Parameter(torch.randn(size, output_length, block_length))
-        self.size = size
-        self.output_length = output_length
-        self.block_length = block_length
+        self.diag = torch.nn.Parameter(torch.randn(input_size, output_block_length, input_block_length))
+        self.input_size = input_size
+        self.output_block_length = output_block_length
+        self.input_block_length = input_block_length
 
     def forward(self, x):
         # We assume x.shape = (n, m, input_size * block_length) -> (n, m, input_size, block_length) 
         # we want self.diag to be (output_size, input_size, block_length)
-        inp = x.reshape(x.shape[0], x.shape[1], self.size, self.block_length)
+        inp = x.reshape(x.shape[0], x.shape[1], self.input_size, self.input_block_length)
         out = torch.einsum('nmij,ioj->nmio', inp, self.diag) # Sum over block length
         return out
 
@@ -162,7 +162,7 @@ class NonstationaryGaussianSpectralMixtureKernelTorch(torch.nn.Module):
         self.weights = torch.nn.Sequential(
             torch.nn.Linear(ndims, latent_dim*output_dim),
             torch.nn.SELU(),
-            Diagonal2DBlockMatrix(size=output_dim , output_length=(q + q + (q*ndims)), block_length=latent_dim),
+            Diagonal2DBlockMatrix(input_size=output_dim , output_block_length=(q + q + (q*ndims)), input_block_length=latent_dim),
             torch.nn.Softplus(),
         )
 
@@ -189,6 +189,21 @@ class NonstationaryGaussianSpectralMixtureKernelTorch(torch.nn.Module):
     
 
 
+class Diagonal3DBlockMatrix(torch.nn.Module):
+    def __init__(self, input_size, output_size, input_block_length, output_block_length):
+        # 
+        super().__init__()
+        self.diag = torch.nn.Parameter(torch.randn(input_size, output_size, output_block_length, input_block_length))
+        self.input_size = input_size
+        self.output_size = output_size
+        self.output_block_length = output_block_length
+        self.input_block_length = input_block_length
+
+    def forward(self, x):
+        raise NotImplementedError("Not implemented yet, need to figure out the einsum dimensions for this one")
+
+
+
 class FundamentalKernelTorch(torch.nn.Module):
     weights: torch.nn.Module
     lambdas: torch.nn.Parameter
@@ -199,13 +214,14 @@ class FundamentalKernelTorch(torch.nn.Module):
         *,
         ndims: int,
         latent_dim: int,
+        output_dim: int,
         **kwargs):
         super().__init__()
         self.ndims = ndims
         self.weights = torch.nn.Sequential(
-            torch.nn.Linear(2*ndims, latent_dim),
+            torch.nn.Linear(ndims*2, latent_dim*output_dim),
             torch.nn.GELU(),
-            torch.nn.Linear(latent_dim, 3)
+            Diagonal2DBlockMatrix(input_size=output_dim, output_block_length=3, input_block_length=latent_dim)
         )
         self.lambdas = torch.nn.Parameter(torch.randn(4))
 
@@ -238,15 +254,15 @@ class FundamentalKernelTorch(torch.nn.Module):
 
     def forward(self, x):
 
-        weights = self.weights(x)
+        weights = self.weights(x).reshape(*x.shape[0:2], -1, 3)
         y = x[..., self.ndims:2*self.ndims]
         x = x[..., :self.ndims]
         k_elliptic = self.elliptic_fundamental(x,y)
         k_parabolic = self.parabolic_fundamental(x,y)
         k_hyperbolic = self.hyperbolic_fundamental(x,y, self.lambdas[-1])
-        output = self.lambdas[0] * weights[..., 0:1] * k_elliptic 
-        + self.lambdas[1] * weights[..., 1:2] * k_parabolic 
-        + self.lambdas[2] * weights[..., 2:3] * k_hyperbolic
+        output = self.lambdas[0] * weights[..., 0] * k_elliptic 
+        + self.lambdas[1] * weights[..., 1] * k_parabolic 
+        + self.lambdas[2] * weights[..., 2] * k_hyperbolic
         return output    
     
 
