@@ -163,6 +163,7 @@ class GaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
 class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
     weights: eqx.Module
     q: int
+    discontinuous: bool
 
     def __init__(
         self,
@@ -170,9 +171,11 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
         ndims: int,
         q: int,
         latent_dim: int,
+        discontinuous: bool, # Add kink
         key,
         **kwargs):
         self.q = q
+        self.discontinuous = discontinuous
         key,_ = jr.split(key)
         self.weights = eqx.nn.MLP(key=key, 
                                   in_size=ndims, 
@@ -194,6 +197,8 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
         )
         cosine = jnp.cos(2 * jnp.pi * (fx @ x - fy @ y))
         k_xy = (wx * wy * k_gibbs * cosine).sum()  # sum over mixtures
+        if self.discontinuous:
+            k_xy = jnp.nn.leaky_relu(k_xy)
         return k_xy    
     
 
@@ -203,8 +208,5 @@ kernels = {'g': GaussianKernel,
            'ns_g': partial(NonstationaryGaussianKernel, latent_dim=8),
            'gsm': partial(GaussianSpectralMixtureKernel, base_kernel=GaussianKernel, q=2),
            'ns_gsm': partial(NonstationaryGaussianSpectralMixtureKernel, latent_dim=8, q=2),
-           'ns_gsm_torch': partial(NonstationaryGaussianSpectralMixtureKernelTorch, latent_dim=8, q=2),
            'green': partial(GreensSecondOrderKernel, latent_dim=8),
-           'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8),
-           'fast_green_torch': partial(FastGreensSecondOrderKernelTorch, latent_dim=8)
            }

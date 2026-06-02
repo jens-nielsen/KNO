@@ -7,8 +7,8 @@ import equinox as eqx
 from kernels import *
 from models import KNO_REG_GRID_1D as model
 
-import os
-os.environ["JAX_PLATFORMS"] = "metal"
+# import os
+# os.environ["JAX_PLATFORMS"] = "metal"
 
 
 import argparse
@@ -51,7 +51,8 @@ num_steps = args.epochs * num_train_batches
 
 ## kernel setup
 integration_kernel = kernels[args.int_kernel]
-integration_kernel = partial(integration_kernel, ndims=1)
+print("Using discontinuous kernel:")
+integration_kernel = partial(integration_kernel, ndims=1, discontinuous=True)
 
 x_normalizer = UnitGaussianNormalizer(x_train)  
 x_train = x_normalizer.encode(x_train)
