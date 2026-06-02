@@ -202,6 +202,67 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
         return k_xy    
     
 
+class FundamentalKernel(eqx.Module, KernelBaseClass):
+    weights: eqx.Module
+    q: int
+    ndims: int
+
+    def __init__(
+        self,
+        *,
+        ndims: int,
+        latent_dim: int,
+        key,
+        **kwargs):
+        self.ndims = ndims
+        key, lkey = jr.split(key)
+        self.weights = eqx.nn.MLP(key=key, 
+                                  in_size=2*ndims, 
+                                  out_size=3, 
+                                  width_size=latent_dim, 
+                                  depth=1, 
+                                  activation=jax.nn.gelu,
+                                  )
+        self.lambdas = jr.normal(lkey, (4)) 
+
+    def elliptic_fundamental(self, x, y):
+        r = ((x-y)**2).mean(axis=-1) + 1e-20
+        if self.ndims == 2:
+            return jnp.log(jnp.sqrt(r))
+        elif self.ndims >= 3:
+            return r**(-(self.ndims-2))
+        elif self.ndims == 1:
+            return jnp.absolute(x-y)
+
+    def parabolic_fundamental(self, x, y):
+        t = x[..., self.ndims:self.ndims*2]
+        tau = y[..., self.ndims:self.ndims*2]
+        s = y[..., :self.ndims]
+        x = x[..., :self.ndims]
+
+        if self.ndims == 2:
+            return 1/(4*jnp.pi)**((self.ndims-1)/2) * jnp.exp(-(x-s)**2/(4*(t-tau))) * jnp.heaviside(t-tau, 0.0)
+
+    def hyperbolic_fundamental(self, x, y, c):
+        t = x[..., self.ndims:self.ndims*2]
+        tau = y[..., self.ndims:self.ndims*2]
+        s = y[..., :self.ndims]
+        x = x[..., :self.ndims]
+
+        if self.ndims == 2:
+            return 1/(2*c) * jnp.heaviside(c*(t-tau) - jnp.absolute(x-s), 0.0) * jnp.heaviside(t-tau, 0.0)
+
+    def eval(self, x, y):
+        q = self.q
+
+        weights = self.weights(jnp.concatenate([x,y]))
+        k_elliptic = self.elliptic_fundamental(x,y)
+        k_parabolic = self.parabolic_fundamental(x,y)
+        k_hyperbolic = self.hyperbolic_fundamental(x,y, self.lambdas[-1])
+        output = self.lambdas[0] * weights[0] * k_elliptic + self.lambdas[1] * weights[1] * k_parabolic + self.lambdas[2] * weights[2] * k_hyperbolic
+        return output    
+    
+
     
 kernels = {'g': GaussianKernel,
            'a_g': AnisotropicGaussianKernel,
@@ -209,4 +270,5 @@ kernels = {'g': GaussianKernel,
            'gsm': partial(GaussianSpectralMixtureKernel, base_kernel=GaussianKernel, q=2),
            'ns_gsm': partial(NonstationaryGaussianSpectralMixtureKernel, latent_dim=8, q=2),
            'green': partial(GreensSecondOrderKernel, latent_dim=8),
+            'fundamental': partial(FundamentalKernel, latent_dim=8)
            }
