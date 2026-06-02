@@ -189,9 +189,71 @@ class NonstationaryGaussianSpectralMixtureKernelTorch(torch.nn.Module):
     
 
 
+class FundamentalKernelTorch(torch.nn.Module):
+    weights: torch.nn.Module
+    lambdas: torch.nn.Parameter
+    ndims: int
+
+    def __init__(
+        self,
+        *,
+        ndims: int,
+        latent_dim: int,
+        **kwargs):
+        super().__init__()
+        self.ndims = ndims
+        self.weights = torch.nn.Sequential(
+            torch.nn.Linear(2*ndims, latent_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(latent_dim, 3)
+        )
+        self.lambdas = torch.nn.Parameter(torch.randn(4))
+
+    def elliptic_fundamental(self, x, y):
+        r = ((x-y)**2).mean(axis=-1, keepdim=True) + 1e-20
+        if self.ndims == 2:
+            return torch.log(torch.sqrt(r))
+        elif self.ndims >= 3:
+            return r**(-(self.ndims-2))
+        elif self.ndims == 1:
+            return torch.absolute(x-y)
+
+    def parabolic_fundamental(self, x, y):
+        t = x[..., -1:] # We assume that the last dimension is time for the parabolic case
+        tau = y[..., -1:]
+        s = y[..., :-1]
+        x = x[..., :-1]
+
+        if self.ndims == 2:
+            return 1/(4*torch.pi)**((self.ndims-1)/2) * torch.exp(-(x-s)**2/(4*(t-tau))) * torch.heaviside(t-tau, torch.tensor(0.0))
+
+    def hyperbolic_fundamental(self, x, y, c):
+        t = x[..., -1:] # We assume that the last dimension is time for the hyperbolic case
+        tau = y[..., -1:]
+        s = y[..., :-1]
+        x = x[..., :-1]
+
+        if self.ndims == 2:
+            return 1/(2*c) * torch.heaviside(c*(t-tau) - torch.absolute(x-s), torch.tensor(0.0)) * torch.heaviside(t-tau, torch.tensor(0.0))
+
+    def forward(self, x):
+
+        weights = self.weights(x)
+        y = x[..., self.ndims:2*self.ndims]
+        x = x[..., :self.ndims]
+        k_elliptic = self.elliptic_fundamental(x,y)
+        k_parabolic = self.parabolic_fundamental(x,y)
+        k_hyperbolic = self.hyperbolic_fundamental(x,y, self.lambdas[-1])
+        output = self.lambdas[0] * weights[..., 0:1] * k_elliptic 
+        + self.lambdas[1] * weights[..., 1:2] * k_parabolic 
+        + self.lambdas[2] * weights[..., 2:3] * k_hyperbolic
+        return output    
+    
+
     
 kernels = {
-           'ns_gsm_torch': partial(NonstationaryGaussianSpectralMixtureKernelTorch, latent_dim=8, q=2),
-           'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8),
-           'fast_green_torch': partial(FastGreensSecondOrderKernelTorch, latent_dim=8)
+        'ns_gsm_torch': partial(NonstationaryGaussianSpectralMixtureKernelTorch, latent_dim=8, q=2),
+        'green_torch': partial(GreensSecondOrderKernelTorch, latent_dim=8),
+        'fast_green_torch': partial(FastGreensSecondOrderKernelTorch, latent_dim=8),
+        'fundamental_torch': partial(FundamentalKernelTorch, latent_dim=8)
            }

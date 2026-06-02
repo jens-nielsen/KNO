@@ -18,7 +18,7 @@ if __name__ == "__main__":
     parser.add_argument('--lift-dim', type=int, default=64)
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--test-batch-size', type=int, default=1)
-    parser.add_argument('--int-kernel', type=str, default='fast_green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'ns_gsm_torch', 'green', 'green_torch', 'fast_green_torch'])
+    parser.add_argument('--int-kernel', type=str, default='fast_green_torch', choices=['g', 'a_g','ns_g', 'gsm', 'ns_gsm', 'ns_gsm_torch', 'green', 'green_torch', 'fast_green_torch', 'fundamental_torch'])
     parser.add_argument('--seed', type=int, default=4)
     parser.add_argument('--print-every', type=int, default=5)
     parser.add_argument('--eval-every', type=int, default=5)
