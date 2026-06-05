@@ -5,6 +5,7 @@ from utils import *
 from kernels import *
 import equinox as eqx
 from models import KNO_DARCY_PWC as model
+from inverse_models import KNO_DARCY_PWC_INVERTIBLE as inverse_model
 import matplotlib.pyplot as plt
 import argparse
 
@@ -75,7 +76,8 @@ x_test = x_normalizer.encode(x_test)
 y_normalizer = UnitGaussianNormalizer(y_train)
 
 in_feats = codomain_dims + domain_dims
-model = model(integration_kernel, 
+print("USING INVERTIBLE MODEL")
+model = inverse_model(integration_kernel, 
               args.depth,
               args.lift_dim, 
               domain_dims,

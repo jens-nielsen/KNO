@@ -214,8 +214,8 @@ class KNO_DARCY_PWC(eqx.Module):
             G1 = int_kernel[0](q,q) * w.T
             G2 = int_kernel[1](q,q) * w.T
             f_q = (G1 @ f_q) + (f_q @ G2.T)
-            print(q.shape, G1.shape, w.shape, f_q.shape, G2.shape)
-            assert False
+            # print(q.shape, G1.shape, w.shape, f_q.shape, G2.shape)
+            # (29,) (29, 29) (29, 1) (29, 29) (29, 29)
             return f_q
         
         q_nodes = x_grid[:,0,0] ## grab 1d x grid
