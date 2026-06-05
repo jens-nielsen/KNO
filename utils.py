@@ -60,6 +60,11 @@ def create_lifted_module(base_layer, lift_dim, key):
     return eqx.filter_vmap(lambda key: base_layer(key=key))(keys)
 
 ### making an 'ensemble layer', which we can eqx.filter_vmap over
+def create_lifted_module(base_layer, lift_dim, key):
+    keys = jr.split(key, lift_dim)
+    return eqx.filter_vmap(lambda key: base_layer(key=key))(keys)
+
+### making an 'ensemble layer', which we can eqx.filter_vmap over
 def create_lifted_module_torch(base_layer, lift_dim):
     return torch.nn.ModuleList([base_layer() for _ in range(lift_dim)])
     return eqx.filter_vmap(lambda key: base_layer(key=key))(keys)

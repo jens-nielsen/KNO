@@ -1,12 +1,11 @@
 import jax
-from jax import numpy as jnp, random as jr, scipy as jsp
+from jax import numpy as jnp, random as jr
 import optax
-from utils import *
-from kernels import *
+from utils import partial, get_batch, cosine_annealing, UnitGaussianNormalizer, is_trainable
+from kernels import kernels
 import equinox as eqx
 from models import KNO_DARCY_PWC as model
 from inverse_models import KNO_DARCY_PWC_INVERTIBLE as inverse_model
-import matplotlib.pyplot as plt
 import argparse
 
 import wandb
@@ -78,7 +77,7 @@ x_test = x_normalizer.encode(x_test)
 y_normalizer = UnitGaussianNormalizer(y_train)
 
 in_feats = codomain_dims + domain_dims
-print("USING INVERTIBLE MODEL")
+print("USING INVERSE MODEL")
 model = inverse_model(integration_kernel, 
               args.depth,
               args.lift_dim, 
