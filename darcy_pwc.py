@@ -37,8 +37,10 @@ x, y = data["x"].astype(DTYPE),data["y"].astype(DTYPE)
 res_1d = 29
 domain_dims = 2
 codomain_dims = 1
-y = y.reshape(1200, -1)
-x = x.reshape(1200, res_1d, res_1d, 1)
+
+print("CHANGING Y AND X TO LEARN INVERSE OPERATOR")
+y = x.reshape(1200, -1)
+x = y.reshape(1200, res_1d, res_1d, 1)
 
 x_grid_1d = jnp.linspace(0,1,29)
 x_grid = jnp.asarray(jnp.meshgrid(x_grid_1d, x_grid_1d, indexing='ij')).transpose(1,2,0).astype(DTYPE)
@@ -68,7 +70,7 @@ num_steps = args.epochs * num_train_batches
 
 ## kernel setup
 integration_kernel = kernels[args.int_kernel]
-integration_kernel = partial(integration_kernel, ndims=1)
+integration_kernel = partial(integration_kernel, ndims=1, discontinuous=False)
 
 x_normalizer = UnitGaussianNormalizer(x_train)  
 x_train = x_normalizer.encode(x_train)
@@ -141,7 +143,7 @@ if args.wandb:
     wandb.init(
         project="KNO_PWC",
         config=config,
-        name="DarcyPWC_KNO_" + args.int_kernel,
+        name="INVERSE_DarcyPWC_KNO_" + args.int_kernel,
     )
 
 
@@ -165,4 +167,4 @@ for epoch in tqdm(range(args.epochs)):
 if args.wandb:
     wandb.finish()
 
-eqx.tree_serialise_leaves(f"./saved_models/DarcyPWC_{args.int_kernel}.eqx", model)
+eqx.tree_serialise_leaves(f"./saved_models/INVERSEDarcyPWC_{args.int_kernel}.eqx", model)

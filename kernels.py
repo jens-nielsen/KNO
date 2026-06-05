@@ -204,7 +204,6 @@ class NonstationaryGaussianSpectralMixtureKernel(eqx.Module, KernelBaseClass):
 
 class FundamentalKernel(eqx.Module, KernelBaseClass):
     weights: eqx.Module
-    q: int
     ndims: int
 
     def __init__(

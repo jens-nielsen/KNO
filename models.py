@@ -221,13 +221,14 @@ class KNO_DARCY_PWC(eqx.Module):
         q_nodes = x_grid[:,0,0] ## grab 1d x grid
 
         f_x = jnp.concatenate((f_x,x_grid), axis=-1) 
-        print(f_x.shape)
+        # print(f_x.shape) (29, 29, 3)
         f_x = f_x.reshape(-1,self.in_feats)
-        print(f_x.shape)
+        # print(f_x.shape) (841, 3)
         f_x = eqx.filter_vmap(self.lift_kernel)(f_x)
         f_x = f_x.reshape(len(q_nodes), len(q_nodes), self.lift_dim).transpose(2,0,1)
-        print(f_x.shape)
+        # print(f_x.shape) (64, 29, 29)
         f_q = f_x
+        # assert False
 
         for i in range(self.depth-1):
 
